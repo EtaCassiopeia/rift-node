@@ -33,6 +33,12 @@ import type { CreateOptions, RiftServer } from './types.js';
 export * from './types.js';
 export { findBinary, downloadBinary, getBinaryVersion } from './binary.js';
 
+// Typed wire model. Exposed under the `wire` namespace because the full Mountebank grammar
+// types (Imposter, Stub, Predicate, Response) intentionally share names with the legacy
+// create()-era types in ./types.js; the escape-hatch functions are also lifted to the root.
+export * as wire from './model/index.js';
+export { fromJson, toWireJson, toWireString, WireValidationError } from './model/index.js';
+
 const DEFAULT_PORT = 2525;
 const DEFAULT_HOST = 'localhost';
 const STARTUP_TIMEOUT_MS = 30000;
