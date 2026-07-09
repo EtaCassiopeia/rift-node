@@ -39,6 +39,9 @@ export { findBinary, downloadBinary, getBinaryVersion } from './binary.js';
 export * as wire from './model/index.js';
 export { fromJson, toWireJson, toWireString, WireValidationError } from './model/index.js';
 
+// Fluent DSL builders (imposter/stub/response/predicate/scenario) that produce the wire model.
+export * from './dsl/index.js';
+
 const DEFAULT_PORT = 2525;
 const DEFAULT_HOST = 'localhost';
 const STARTUP_TIMEOUT_MS = 30000;
