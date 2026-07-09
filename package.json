@@ -1,10 +1,11 @@
 {
   "name": "@rift-vs/rift",
-  "version": "0.1.0",
-  "description": "Mountebank-compatible Node.js bindings for Rift - A high-performance service virtualization proxy",
+  "version": "0.12.1",
+  "description": "Official Node.js / TypeScript SDK for Rift - a high-performance, Mountebank-compatible HTTP/HTTPS mock server",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
+  "minEngineVersion": "0.12.0",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -35,7 +36,7 @@
     "typescript": "^5.3.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "dist",
@@ -56,13 +57,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/EtaCassiopeia/rift.git",
-    "directory": "packages/rift-node"
+    "url": "git+https://github.com/EtaCassiopeia/rift-node.git"
   },
   "bugs": {
-    "url": "https://github.com/EtaCassiopeia/rift/issues"
+    "url": "https://github.com/EtaCassiopeia/rift-node/issues"
   },
-  "homepage": "https://github.com/EtaCassiopeia/rift/tree/master/packages/rift-node#readme",
+  "homepage": "https://github.com/EtaCassiopeia/rift-node#readme",
   "license": "MIT",
   "author": "Rift Contributors",
   "publishConfig": {

@@ -2,7 +2,6 @@
  * Unit tests for the main module
  */
 
-import { jest } from '@jest/globals';
 
 // Test the buildCliArgs function by mocking create and testing args
 describe('index', () => {

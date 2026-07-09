@@ -1,0 +1,107 @@
+name: Publish
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RIFT_SKIP_BINARY_DOWNLOAD: '1'
+
+jobs:
+  # Runs on every push/PR. Validates the publishable tarball against a UNIQUE snapshot
+  # prerelease version, so it can never conflict with an already-published version — unlike
+  # dry-running the stable version, which would break the day that stable version ships.
+  dry-run:
+    name: publish (dry-run, snapshot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Stamp snapshot version
+        shell: bash
+        run: |
+          base="$(node -p "require('./package.json').version")"
+          snap="${base%-*}-snapshot.${GITHUB_RUN_NUMBER}.g$(git rev-parse --short HEAD)"
+          echo "Snapshot version: $snap"
+          npm version "$snap" --no-git-tag-version --allow-same-version
+      - name: npm publish --dry-run
+        run: npm publish --dry-run --access public --tag snapshot
+
+  # Publishes a snapshot prerelease under the `snapshot` dist-tag on every push to master.
+  # Soft-gated on NPM_TOKEN: without the secret it logs and skips (CI stays green); once the
+  # token is configured it starts publishing snapshots automatically. `latest` is untouched.
+  snapshot:
+    name: publish (snapshot)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Publish snapshot
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN not set — skipping snapshot publish."
+            exit 0
+          fi
+          base="$(node -p "require('./package.json').version")"
+          snap="${base%-*}-snapshot.${GITHUB_RUN_NUMBER}.g$(git rev-parse --short HEAD)"
+          npm version "$snap" --no-git-tag-version --allow-same-version
+          npm publish --access public --tag snapshot --provenance
+
+  # Real stable publish, gated on a GitHub Release. Publishes the package.json version as-is
+  # under `latest`. Requires the NPM_TOKEN secret and a tag matching package.json.
+  publish:
+    name: publish (npm, stable)
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "Release tag ($tag) does not match package.json version ($pkg)" >&2
+            exit 1
+          fi
+      - name: npm publish
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

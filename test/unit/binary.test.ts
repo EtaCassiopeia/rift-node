@@ -2,7 +2,6 @@
  * Unit tests for binary discovery and download utilities
  */
 
-import { jest } from '@jest/globals';
 import { PLATFORM_MAP, getPlatformKey } from '../../src/binary.js';
 
 describe('binary', () => {
