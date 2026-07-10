@@ -1,42 +1,40 @@
 /**
- * Predicate helper functions. Unlike the response/stub/imposter builders, these return plain
- * wire {@link Predicate} objects directly — a predicate is already a flat, immutable value with
- * no incremental state to accumulate, so a builder class would add ceremony without benefit.
+ * Field binders and composition helpers (issue #22, design §5.3).
+ *
+ * `req.*` binds a bare value or a field-agnostic {@link Matcher} (see `matcher.ts`) to a wire
+ * field, producing a plain {@link Predicate}. A bare `string`/`number`/`object` means `equals`.
+ * `and`/`or`/`not`/`injectPredicate` compose predicates — like matchers, predicates are already
+ * flat immutable values, so plain functions are enough; no builder class needed.
  */
 
-import type { FieldMatch, JsonValue, Predicate } from '../model/index.js';
+import type { JsonValue, Predicate } from '../model/index.js';
+import { Matcher, equals } from './matcher.js';
 
-function fieldMatch(field: string, value: JsonValue): FieldMatch {
-  return { [field]: value };
+function toMatcher(arg: JsonValue | Matcher): Matcher {
+  return arg instanceof Matcher ? arg : equals(arg);
 }
 
-export function equals(field: string, value: JsonValue): Predicate {
-  return { equals: fieldMatch(field, value) };
+function bind(field: string, key: string | undefined, arg: JsonValue | Matcher): Predicate {
+  return toMatcher(arg).compile(field, key);
 }
 
-export function deepEquals(field: string, value: JsonValue): Predicate {
-  return { deepEquals: fieldMatch(field, value) };
-}
-
-export function matches(field: string, value: JsonValue): Predicate {
-  return { matches: fieldMatch(field, value) };
-}
-
-export function contains(field: string, value: JsonValue): Predicate {
-  return { contains: fieldMatch(field, value) };
-}
-
-export function startsWith(field: string, value: JsonValue): Predicate {
-  return { startsWith: fieldMatch(field, value) };
-}
-
-export function endsWith(field: string, value: JsonValue): Predicate {
-  return { endsWith: fieldMatch(field, value) };
-}
-
-export function exists(field: string): Predicate {
-  return { exists: { [field]: true } };
-}
+export const req = {
+  method(m: string | Matcher): Predicate {
+    return bind('method', undefined, m);
+  },
+  path(m: string | Matcher): Predicate {
+    return bind('path', undefined, m);
+  },
+  body(m: string | object | Matcher): Predicate {
+    return bind('body', undefined, m as JsonValue | Matcher);
+  },
+  header(name: string, m: string | Matcher): Predicate {
+    return bind('headers', name, m);
+  },
+  query(name: string, m: string | number | Matcher): Predicate {
+    return bind('query', name, m);
+  },
+};
 
 export function and(...predicates: Predicate[]): Predicate {
   return { and: predicates };
@@ -48,4 +46,8 @@ export function or(...predicates: Predicate[]): Predicate {
 
 export function not(predicate: Predicate): Predicate {
   return { not: predicate };
+}
+
+export function injectPredicate(jsFn: string): Predicate {
+  return { inject: jsFn };
 }

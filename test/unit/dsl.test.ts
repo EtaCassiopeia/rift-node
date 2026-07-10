@@ -37,6 +37,7 @@ import {
   or,
   not,
   exists,
+  req,
   scenario,
   fault,
   proxyTo,
@@ -58,7 +59,7 @@ describe('DSL — RFC §12 sample builds the exact wire imposter', () => {
       recordRequests: true,
       stubs: [
         {
-          predicates: [{ equals: { method: 'GET', path: '/api/users/1' } }],
+          predicates: [{ equals: { method: 'GET' } }, { equals: { path: '/api/users/1' } }],
           responses: [
             {
               is: {
@@ -70,7 +71,7 @@ describe('DSL — RFC §12 sample builds the exact wire imposter', () => {
           ],
         },
         {
-          predicates: [{ equals: { method: 'POST', path: '/api/users' } }],
+          predicates: [{ equals: { method: 'POST' } }, { equals: { path: '/api/users' } }],
           responses: [
             { is: { statusCode: 201 }, _behaviors: { wait: 50 } },
             { is: { statusCode: 503 } },
@@ -127,15 +128,18 @@ describe('DSL — response builders', () => {
 });
 
 describe('DSL — predicate entry + helpers', () => {
-  it('method helpers seed an equals{method,path} predicate', () => {
+  it('method helpers seed separate equals(method) + equals(path) predicates', () => {
     expect(onGet('/x').willReturn(ok()).build().predicates).toEqual([
-      { equals: { method: 'GET', path: '/x' } },
+      { equals: { method: 'GET' } },
+      { equals: { path: '/x' } },
     ]);
     expect(onPost('/y').willReturn(ok()).build().predicates).toEqual([
-      { equals: { method: 'POST', path: '/y' } },
+      { equals: { method: 'POST' } },
+      { equals: { path: '/y' } },
     ]);
     expect(on('DELETE', '/z').willReturn(ok()).build().predicates).toEqual([
-      { equals: { method: 'DELETE', path: '/z' } },
+      { equals: { method: 'DELETE' } },
+      { equals: { path: '/z' } },
     ]);
     expect(onAny('/any').willReturn(ok()).build().predicates).toEqual([
       { equals: { path: '/any' } },
@@ -143,22 +147,23 @@ describe('DSL — predicate entry + helpers', () => {
   });
   it('bare stub().when() adds explicit predicates; and/or/not/matches/exists helpers', () => {
     const s = stub()
-      .when(and(equals('method', 'GET'), matches('path', '/u/\\d+')))
+      .when(and(req.method(equals('GET')), req.path(matches('/u/\\d+'))))
       .willReturn(okJson({ id: 1 }))
       .build();
     expect(s.predicates).toEqual([
       { and: [{ equals: { method: 'GET' } }, { matches: { path: '/u/\\d+' } }] },
     ]);
-    expect(or(equals('method', 'PUT'), equals('method', 'PATCH'))).toEqual({
+    expect(or(req.method(equals('PUT')), req.method(equals('PATCH')))).toEqual({
       or: [{ equals: { method: 'PUT' } }, { equals: { method: 'PATCH' } }],
     });
-    expect(not(exists('path'))).toEqual({ not: { exists: { path: true } } });
+    expect(not(req.path(exists()))).toEqual({ not: { exists: { path: true } } });
   });
   it('multiple .when() calls accumulate as separate predicates (implicit AND)', () => {
-    const s = onGet('/x').when(exists('headers.Authorization')).willReturn(ok()).build();
+    const s = onGet('/x').when(req.header('Authorization', exists())).willReturn(ok()).build();
     expect(s.predicates).toEqual([
-      { equals: { method: 'GET', path: '/x' } },
-      { exists: { 'headers.Authorization': true } },
+      { equals: { method: 'GET' } },
+      { equals: { path: '/x' } },
+      { exists: { headers: { Authorization: true } } },
     ]);
   });
 });
@@ -203,14 +208,14 @@ describe('DSL — scenario FSM builder', () => {
         scenarioName: 'checkout',
         required_scenario_state: 'empty',
         new_scenario_state: 'has-items',
-        predicates: [{ equals: { method: 'POST', path: '/cart' } }],
+        predicates: [{ equals: { method: 'POST' } }, { equals: { path: '/cart' } }],
         responses: [{ is: { statusCode: 201 } }],
       },
       {
         scenarioName: 'checkout',
         required_scenario_state: 'has-items',
         new_scenario_state: 'done',
-        predicates: [{ equals: { method: 'POST', path: '/checkout' } }],
+        predicates: [{ equals: { method: 'POST' } }, { equals: { path: '/checkout' } }],
         responses: [{ is: { statusCode: 200, body: 'done' } }],
       },
     ]);
@@ -243,29 +248,38 @@ describe('DSL — conformance corpus accountability (acceptance #2)', () => {
 
   it('rebuilds basic-api.json exactly via the DSL', () => {
     const original = JSON.parse(fs.readFileSync(path.join(fixturesDir, 'basic-api.json'), 'utf8'));
+    // basic-api.json is a captured real-world Mountebank fixture that pairs method+path into a
+    // single `equals` predicate (rather than the DSL openers' new split predicates) — reproduced
+    // here via the raw-predicate escape hatch (`when(literal)`) to keep the byte-exact rebuild.
     const built = {
       imposters: [
         imposter('Basic REST API')
           .port(4545)
           .protocol('http')
-          .stub(onGet('/health').willReturn(status(200, 'OK')))
           .stub(
-            onGet('/api/users').willReturn(
-              okJson([
-                { id: 1, name: 'Alice' },
-                { id: 2, name: 'Bob' },
-              ])
-            )
+            stub()
+              .when({ equals: { method: 'GET', path: '/health' } })
+              .willReturn(status(200, 'OK'))
           )
           .stub(
             stub()
-              .when(and(equals('method', 'GET'), matches('path', '/api/users/\\d+')))
+              .when({ equals: { method: 'GET', path: '/api/users' } })
               .willReturn(
-                okJson({ id: 1, name: 'Alice', email: 'alice@example.com' })
+                okJson([
+                  { id: 1, name: 'Alice' },
+                  { id: 2, name: 'Bob' },
+                ])
               )
           )
           .stub(
-            onPost('/api/users').willReturn(okJson({ id: 999, message: 'Created' }).status(201))
+            stub()
+              .when(and(req.method(equals('GET')), req.path(matches('/api/users/\\d+'))))
+              .willReturn(okJson({ id: 1, name: 'Alice', email: 'alice@example.com' }))
+          )
+          .stub(
+            stub()
+              .when({ equals: { method: 'POST', path: '/api/users' } })
+              .willReturn(okJson({ id: 999, message: 'Created' }).status(201))
           )
           .build(),
       ],
@@ -327,16 +341,18 @@ describe('DSL — conformance corpus accountability (acceptance #2)', () => {
 });
 
 describe('DSL — additional builder coverage', () => {
-  it('deepEquals predicate helper', () => {
-    expect(deepEquals('method', 'GET')).toEqual({ deepEquals: { method: 'GET' } });
+  it('deepEquals matcher binds via req.method', () => {
+    expect(req.method(deepEquals('GET'))).toEqual({ deepEquals: { method: 'GET' } });
   });
 
   it('onPut / onDelete seed the right method', () => {
     expect(onPut('/x').willReturn(ok()).build().predicates).toEqual([
-      { equals: { method: 'PUT', path: '/x' } },
+      { equals: { method: 'PUT' } },
+      { equals: { path: '/x' } },
     ]);
     expect(onDelete('/x').willReturn(noContent()).build().predicates).toEqual([
-      { equals: { method: 'DELETE', path: '/x' } },
+      { equals: { method: 'DELETE' } },
+      { equals: { path: '/x' } },
     ]);
   });
 
@@ -389,13 +405,13 @@ describe('DSL — scenario FSM robustness', () => {
         scenarioName: 's',
         required_scenario_state: 'a',
         new_scenario_state: 'b',
-        predicates: [{ equals: { method: 'POST', path: '/x' } }],
+        predicates: [{ equals: { method: 'POST' } }, { equals: { path: '/x' } }],
         responses: [{ is: { statusCode: 201 } }],
       },
       {
         scenarioName: 's',
         required_scenario_state: 'b',
-        predicates: [{ equals: { method: 'GET', path: '/y' } }],
+        predicates: [{ equals: { method: 'GET' } }, { equals: { path: '/y' } }],
         responses: [{ is: { statusCode: 200, body: 'done' } }],
       },
     ]);
