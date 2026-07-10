@@ -15,6 +15,9 @@ import {
   InvalidDefinition,
   RiftError,
 } from './errors.js';
+// Type-only: erased at compile time, so this does not create a runtime import cycle even though
+// ../spawn/spawn.js imports `rift` (below) from this module to attach `.spawn` at load time.
+import type { SpawnFn } from '../spawn/spawn.js';
 
 /** Shape of the engine's JSON error envelope: `{ "errors": [{ "code": "...", "message": "..." }] }`. */
 interface EngineErrorBody {
@@ -260,5 +263,13 @@ export function connect(url: string): RemoteClient {
   return new RemoteClient(normalizeUrl(url));
 }
 
-/** Facade for the remote transport; later issues extend this with more entry points. */
-export const rift = { connect };
+/**
+ * Facade for the remote/spawn transports. `spawn` is attached by ../spawn/spawn.js when that
+ * module is loaded (it's optional here so this module has no runtime dependency on it).
+ */
+export interface RiftFacade {
+  connect: typeof connect;
+  spawn?: SpawnFn;
+}
+
+export const rift: RiftFacade = { connect };

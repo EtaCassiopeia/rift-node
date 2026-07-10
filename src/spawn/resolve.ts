@@ -1,0 +1,306 @@
+/**
+ * Binary resolution for the Rift engine (issue #5).
+ *
+ * Replaces the old postinstall-download flow with an on-demand resolver: check for an explicit
+ * override, then PATH, then a local version cache, and only reach for the network as a last
+ * resort — and never when the environment is air-gapped. Every IO dependency is injectable so
+ * the resolution order can be verified without touching the real filesystem/network (see
+ * test/unit/spawn.test.ts), while sane real implementations back each dependency by default.
+ */
+
+import { execSync } from 'child_process';
+import { createHash } from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+/** Env lookup shape shared by every function here — matches `process.env`'s shape structurally. */
+export type EnvRecord = Record<string, string | undefined>;
+
+const DEFAULT_DOWNLOAD_BASE = 'https://github.com/EtaCassiopeia/rift/releases/download';
+
+/**
+ * Default engine version to resolve when the caller doesn't pin one.
+ *
+ * Tracks package.json's `minEngineVersion` (kept in sync by hand — importing package.json here
+ * would require ESM import-assertion machinery for a single constant).
+ */
+export const DEFAULT_ENGINE_VERSION = 'v0.12.0';
+
+/** Binary names to probe, in order of preference, newest/most-specific first. */
+const BINARY_NAMES: readonly string[] =
+  process.platform === 'win32'
+    ? ['rift-http-proxy.exe', 'rift.exe', 'mb.exe']
+    : ['rift-http-proxy', 'rift', 'mb'];
+
+const CANONICAL_BINARY_NAME = BINARY_NAMES[0] as string;
+
+/** Rust target triple + archive shape for a given (platform, arch) pair. */
+export interface PlatformTarget {
+  target: string;
+  ext: 'tar.gz' | 'zip';
+  /** Archive filename for a given engine version, e.g. `rift-v0.12.0-x86_64-apple-darwin.tar.gz`. */
+  archiveName(version: string): string;
+}
+
+const TARGET_MAP: Record<string, { target: string; ext: 'tar.gz' | 'zip' }> = {
+  'linux-x64': { target: 'x86_64-unknown-linux-gnu', ext: 'tar.gz' },
+  'linux-arm64': { target: 'aarch64-unknown-linux-gnu', ext: 'tar.gz' },
+  'darwin-x64': { target: 'x86_64-apple-darwin', ext: 'tar.gz' },
+  'darwin-arm64': { target: 'aarch64-apple-darwin', ext: 'tar.gz' },
+  'win32-x64': { target: 'x86_64-pc-windows-msvc', ext: 'zip' },
+};
+
+/** Maps a (platform, arch) pair to its Rust release target. Defaults to the current process's. */
+export function platformTarget(
+  platform: string = process.platform,
+  arch: string = process.arch
+): PlatformTarget {
+  const key = `${platform}-${arch}`;
+  const entry = TARGET_MAP[key];
+  if (!entry) {
+    throw new Error(
+      `Unsupported platform/arch combination: ${key}. Supported: ${Object.keys(TARGET_MAP).join(', ')}`
+    );
+  }
+  const { target, ext } = entry;
+  return {
+    target,
+    ext,
+    archiveName(version: string): string {
+      return `rift-${version}-${target}.${ext}`;
+    },
+  };
+}
+
+export interface DownloadUrlOptions {
+  env?: EnvRecord;
+  mirror?: string;
+  platform?: string;
+  arch?: string;
+}
+
+/**
+ * Builds the download URL for a release archive, honoring (in priority order) an explicit
+ * mirror, `RIFT_DOWNLOAD_URL`, `RIFT_MIRROR_URL`, then the public GitHub releases base.
+ */
+export function binaryDownloadUrl(version: string, opts: DownloadUrlOptions = {}): string {
+  const env = opts.env ?? process.env;
+  const base = opts.mirror ?? env.RIFT_DOWNLOAD_URL ?? env.RIFT_MIRROR_URL ?? DEFAULT_DOWNLOAD_BASE;
+  const { archiveName } = platformTarget(opts.platform, opts.arch);
+  return `${base}/${version}/${archiveName(version)}`;
+}
+
+/** True when the environment opts out of network binary downloads. */
+export function isAirGapped(env: EnvRecord = process.env): boolean {
+  return Boolean(env.RIFT_OFFLINE) || Boolean(env.RIFT_SKIP_BINARY_DOWNLOAD);
+}
+
+/** Verifies `data` against an expected sha256 hex digest (case-insensitive). */
+export function verifySha256(data: Buffer | Uint8Array, expectedHex: string): boolean {
+  const actual = createHash('sha256').update(data).digest('hex');
+  return actual.toLowerCase() === expectedHex.trim().toLowerCase();
+}
+
+/** Extracts the hex digest from a `.sha256` sidecar (`<hex>` or `<hex>  filename`). */
+export function parseSha256Sidecar(text: string): string | null {
+  const token = text.trim().split(/\s+/)[0] ?? '';
+  return /^[0-9a-fA-F]{64}$/.test(token) ? token : null;
+}
+
+/** True when checksum verification is explicitly opted out (`RIFT_SKIP_CHECKSUM`). */
+function checksumOptOut(env: EnvRecord): boolean {
+  return Boolean(env.RIFT_SKIP_CHECKSUM);
+}
+
+/**
+ * Fetches the `<url>.sha256` sidecar and verifies `data` against it. A tampered/corrupt download
+ * throws; a MISSING checksum also throws (refuse unverified) unless `RIFT_SKIP_CHECKSUM` is set —
+ * downloads must never run unverified silently.
+ */
+export async function fetchAndVerifyChecksum(
+  url: string,
+  data: Buffer | Uint8Array,
+  opts: { env?: EnvRecord; fetchImpl?: typeof fetch } = {}
+): Promise<void> {
+  const env = opts.env ?? process.env;
+  const doFetch = opts.fetchImpl ?? fetch;
+  let sha: string | null = null;
+  try {
+    const response = await doFetch(`${url}.sha256`);
+    if (response.ok) {
+      sha = parseSha256Sidecar(await response.text());
+    }
+  } catch {
+    sha = null;
+  }
+  if (sha === null) {
+    if (checksumOptOut(env)) return;
+    throw new Error(
+      `No SHA-256 checksum available for ${url}; refusing to use an unverified download. ` +
+        'Set RIFT_SKIP_CHECKSUM=1 to override (not recommended).'
+    );
+  }
+  if (!verifySha256(data, sha)) {
+    throw new Error(`Checksum mismatch for Rift binary downloaded from ${url}`);
+  }
+}
+
+function defaultCacheDir(): string {
+  return path.join(os.homedir(), '.cache', 'rift-node', 'binaries');
+}
+
+function defaultCacheLookup(version: string): string | null {
+  const candidate = path.join(defaultCacheDir(), `rift-${version}`, CANONICAL_BINARY_NAME);
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function defaultLookupPath(name: string): string | null {
+  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const result = execSync(`${whichCmd} ${name}`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const found = result.trim().split(/\r?\n/)[0];
+    return found && fs.existsSync(found) ? found : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractArchive(archivePath: string, destDir: string, ext: 'tar.gz' | 'zip'): void {
+  try {
+    if (ext === 'tar.gz') {
+      execSync(`tar -xzf "${archivePath}" -C "${destDir}"`, { stdio: 'pipe' });
+    } else if (process.platform === 'win32') {
+      execSync(
+        `powershell -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${destDir}' -Force"`,
+        { stdio: 'pipe' }
+      );
+    } else {
+      execSync(`unzip -o "${archivePath}" -d "${destDir}"`, { stdio: 'pipe' });
+    }
+  } catch (cause) {
+    throw new Error(`Failed to extract Rift archive ${archivePath}: ${String(cause)}`);
+  }
+}
+
+/** Builds the real (network-hitting) `download` dependency, closing over the resolved version. */
+function makeDefaultDownload(
+  version: string,
+  platform: string | undefined,
+  arch: string | undefined,
+  env: EnvRecord
+): (url: string, sha: string | null) => Promise<string> {
+  return async function download(url: string, sha: string | null): Promise<string> {
+    const { ext, target } = platformTarget(platform, arch);
+    const destDir = path.join(defaultCacheDir(), `rift-${version}`);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download Rift binary from ${url}: HTTP ${response.status}`);
+    }
+    const data = Buffer.from(await response.arrayBuffer());
+
+    // Verify BEFORE writing/extracting anything: a caller-supplied digest wins, otherwise the
+    // `.sha256` sidecar is fetched and enforced (missing checksum is fatal unless opted out).
+    if (sha) {
+      if (!verifySha256(data, sha)) {
+        throw new Error(`Checksum mismatch for Rift binary downloaded from ${url}`);
+      }
+    } else {
+      await fetchAndVerifyChecksum(url, data, { env });
+    }
+
+    fs.mkdirSync(destDir, { recursive: true });
+    const archivePath = path.join(destDir, `archive.${ext}`);
+    fs.writeFileSync(archivePath, data);
+    extractArchive(archivePath, destDir, ext);
+    fs.unlinkSync(archivePath);
+
+    const binaryPath = path.join(destDir, CANONICAL_BINARY_NAME);
+    if (!fs.existsSync(binaryPath)) {
+      // Some archives nest the binary under a `rift-<version>-<target>/` directory.
+      const nested = path.join(destDir, `rift-${version}-${target}`, CANONICAL_BINARY_NAME);
+      if (fs.existsSync(nested)) {
+        fs.renameSync(nested, binaryPath);
+      }
+    }
+    if (!fs.existsSync(binaryPath)) {
+      throw new Error(`Downloaded archive did not contain the expected binary: ${binaryPath}`);
+    }
+    if (process.platform !== 'win32') {
+      fs.chmodSync(binaryPath, 0o755);
+    }
+    return binaryPath;
+  };
+}
+
+export interface ResolveBinaryOptions {
+  /** Engine version to resolve when falling through to cache/download. Defaults to {@link DEFAULT_ENGINE_VERSION}. */
+  version?: string;
+  /** Explicit binary path override; beats `env.RIFT_BINARY_PATH`. */
+  binaryPath?: string;
+  env?: EnvRecord;
+  fileExists?: (p: string) => boolean;
+  lookupPath?: (name: string) => string | null;
+  cacheLookup?: (version: string) => string | null;
+  download?: (url: string, sha: string | null) => Promise<string>;
+  mirror?: string;
+  platform?: string;
+  arch?: string;
+}
+
+/**
+ * Resolves a path to a runnable Rift engine binary.
+ *
+ * Resolution order:
+ *   1. `opts.binaryPath ?? env.RIFT_BINARY_PATH`, if it exists on disk.
+ *   2. The first of `rift-http-proxy` / `rift` / `mb` found on `PATH`.
+ *   3. A previously-downloaded copy in the local version cache.
+ *   4. If air-gapped (`RIFT_OFFLINE` / `RIFT_SKIP_BINARY_DOWNLOAD`), throw — never download.
+ *   5. Otherwise, download the release archive for the resolved version and cache it.
+ */
+export async function resolveBinary(opts: ResolveBinaryOptions = {}): Promise<string> {
+  const env = opts.env ?? process.env;
+  const version = opts.version ?? DEFAULT_ENGINE_VERSION;
+  const fileExists = opts.fileExists ?? fs.existsSync;
+  const lookupPath = opts.lookupPath ?? defaultLookupPath;
+  const cacheLookup = opts.cacheLookup ?? defaultCacheLookup;
+  const download = opts.download ?? makeDefaultDownload(version, opts.platform, opts.arch, env);
+
+  // 1. Explicit override.
+  const explicitPath = opts.binaryPath ?? env.RIFT_BINARY_PATH;
+  if (explicitPath && fileExists(explicitPath)) {
+    return explicitPath;
+  }
+
+  // 2. PATH lookup.
+  for (const name of BINARY_NAMES) {
+    const found = lookupPath(name);
+    if (found) return found;
+  }
+
+  // 3. Local version cache.
+  const cached = cacheLookup(version);
+  if (cached) return cached;
+
+  // 4. Air-gapped: refuse to reach the network.
+  if (isAirGapped(env)) {
+    throw new Error(
+      'Rift binary not found locally and downloads are disabled (air-gapped mode: ' +
+        'RIFT_OFFLINE or RIFT_SKIP_BINARY_DOWNLOAD is set). Set RIFT_BINARY_PATH to an existing ' +
+        `binary, install it to PATH, or unset the air-gap override to allow downloading ${version}.`
+    );
+  }
+
+  // 5. Download as a last resort.
+  const url = binaryDownloadUrl(version, {
+    env,
+    mirror: opts.mirror,
+    platform: opts.platform,
+    arch: opts.arch,
+  });
+  return download(url, null);
+}

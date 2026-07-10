@@ -6,6 +6,9 @@
   "types": "dist/index.d.ts",
   "type": "module",
   "minEngineVersion": "0.12.0",
+  "bin": {
+    "rift-fetch": "bin/rift-fetch.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -17,7 +20,6 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:unit": "npm test -- --testPathPattern=test/unit",
     "test:integration": "npm test -- --testPathPattern=test/integration",
-    "postinstall": "node bin/postinstall.js",
     "prepublishOnly": "npm run build",
     "lint": "eslint src test --ext .ts",
     "typecheck": "tsc --noEmit"

@@ -1,0 +1,21 @@
+/**
+ * Spawn transport — barrel export (issue #5).
+ *
+ * Binary resolution (manifest-driven discovery, mirror/air-gap overrides, sha256 verification)
+ * plus the process-spawning transport that hands back a connected `RemoteClient`.
+ */
+
+export {
+  resolveBinary,
+  binaryDownloadUrl,
+  platformTarget,
+  isAirGapped,
+  verifySha256,
+  parseSha256Sidecar,
+  fetchAndVerifyChecksum,
+  DEFAULT_ENGINE_VERSION,
+} from './resolve.js';
+export type { PlatformTarget, DownloadUrlOptions, ResolveBinaryOptions, EnvRecord } from './resolve.js';
+
+export { buildSpawnArgs, spawn } from './spawn.js';
+export type { SpawnedEngine, SpawnOptions } from './spawn.js';

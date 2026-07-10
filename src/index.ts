@@ -23,10 +23,11 @@
  * ```
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn as spawnProcess, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import axios, { AxiosError } from 'axios';
 import { findBinary } from './binary.js';
+import { resolveBinary } from './spawn/resolve.js';
 import type { CreateOptions, RiftServer } from './types.js';
 
 // Re-export types
@@ -44,6 +45,9 @@ export * from './dsl/index.js';
 
 // Fetch-based remote admin API client (issue #4): connect()/rift.connect() + typed RiftError hierarchy.
 export * from './remote/index.js';
+
+// Spawn transport + reworked binary resolver (issue #5): resolveBinary()/spawn()/rift.spawn().
+export * from './spawn/index.js';
 
 const DEFAULT_PORT = 2525;
 const DEFAULT_HOST = 'localhost';
@@ -195,6 +199,24 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Resolve the Rift engine binary for `create()`.
+ *
+ * Preserves the legacy discovery order for any locally-present binary — `RIFT_BINARY_PATH` ->
+ * the postinstall-populated `binaries/` dir -> `PATH` (via `findBinary()`) — so behavior is
+ * unchanged for existing installs. Only when nothing local is found does it consult the new
+ * resolver's version cache and on-demand download; that resolver's checksum/air-gap errors then
+ * propagate (they are not masked by falling back to a local lookup that already failed).
+ */
+async function resolveEngineBinary(): Promise<string> {
+  try {
+    return await findBinary();
+  } catch {
+    // Nothing found locally — fall through to the cache/download resolver.
+  }
+  return await resolveBinary();
+}
+
+/**
  * Create a new Rift server instance
  *
  * This function provides Mountebank-compatible API for creating a server.
@@ -224,10 +246,10 @@ export async function create(options: CreateOptions = {}): Promise<RiftServer> {
   const args = buildCliArgs(options);
 
   // Find the rift binary
-  const binaryPath = await findBinary();
+  const binaryPath = await resolveEngineBinary();
 
   // Spawn the process
-  const proc = spawn(binaryPath, args, {
+  const proc = spawnProcess(binaryPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
   });
