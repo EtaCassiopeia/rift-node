@@ -9,6 +9,16 @@ high-performance, Mountebank-compatible HTTP/HTTPS mock server written in Rust.
 > from [`rift/packages/rift-node`](https://github.com/EtaCassiopeia/rift/tree/master/packages/rift-node)
 > and migrates here — same package name, version line continues at 0.12.0.
 
+## Requirements
+
+- **Node ≥ 20.** The SDK uses the global `fetch`, `worker_threads`, and `await using`
+  (`Symbol.asyncDispose`).
+- **ESM-only.** The package ships as ES modules with no CommonJS build. Import it with `import`
+  (or dynamic `import()` from a CommonJS module); `require('@rift-vs/rift')` is not supported.
+- **Zero runtime dependencies.** `undici`, `vitest`, and `@rift-vs/rift-embedded` are *optional*
+  peer dependencies, pulled in only if you use the intercept undici helper, the Vitest testkit, or
+  the embedded transport, respectively.
+
 ## What it will look like
 
 ```ts

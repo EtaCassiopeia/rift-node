@@ -1,38 +1,46 @@
 /**
- * Unit tests for binary discovery and download utilities
+ * Gate for issue #25 AC3 — binary.ts is a thin, deprecated wrapper over the reworked resolver.
+ * The legacy download/extract stack (its own `https.get`, tar/unzip shell-outs) and the buggy
+ * `isBinaryInstalled` are gone; discovery/download delegate to `resolveBinary`.
  */
 
-import { PLATFORM_MAP, getPlatformKey } from '../../src/binary.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import * as binary from '../../src/binary.js';
 
-describe('binary', () => {
-  describe('getPlatformKey', () => {
-    it('returns correct format for current platform', () => {
-      const key = getPlatformKey();
-      expect(key).toMatch(/^(darwin|linux|win32)-(x64|arm64)$/);
-    });
+const binarySrc = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'binary.ts'),
+  'utf8'
+);
+
+describe('issue #25 — binary.ts thin wrappers', () => {
+  it('AC3: still exports the three compatibility wrappers as functions', () => {
+    expect(typeof binary.findBinary).toBe('function');
+    expect(typeof binary.downloadBinary).toBe('function');
+    expect(typeof binary.getBinaryVersion).toBe('function');
   });
 
-  describe('PLATFORM_MAP', () => {
-    it('has entries for common platforms', () => {
-      expect(PLATFORM_MAP['darwin-x64']).toBeDefined();
-      expect(PLATFORM_MAP['darwin-arm64']).toBeDefined();
-      expect(PLATFORM_MAP['linux-x64']).toBeDefined();
-      expect(PLATFORM_MAP['linux-arm64']).toBeDefined();
-      expect(PLATFORM_MAP['win32-x64']).toBeDefined();
-    });
+  it('AC3: the buggy isBinaryInstalled export is removed', () => {
+    expect((binary as Record<string, unknown>).isBinaryInstalled).toBeUndefined();
+  });
 
-    it('darwin binaries have tar.gz extension', () => {
-      expect(PLATFORM_MAP['darwin-x64']).toMatch(/\.tar\.gz$/);
-      expect(PLATFORM_MAP['darwin-arm64']).toMatch(/\.tar\.gz$/);
-    });
+  it('AC3: the retired legacy platform helpers are gone', () => {
+    expect((binary as Record<string, unknown>).PLATFORM_MAP).toBeUndefined();
+    expect((binary as Record<string, unknown>).getPlatformKey).toBeUndefined();
+  });
 
-    it('linux binaries have tar.gz extension', () => {
-      expect(PLATFORM_MAP['linux-x64']).toMatch(/\.tar\.gz$/);
-      expect(PLATFORM_MAP['linux-arm64']).toMatch(/\.tar\.gz$/);
-    });
+  it('AC3: delegates to the resolver and drops its own download/extract stack', () => {
+    expect(binarySrc).toMatch(/from '\.\/spawn\/resolve\.js'/);
+    expect(binarySrc).toMatch(/resolveBinary\(/);
+    expect(binarySrc).not.toMatch(/https\.get\(/);
+    expect(binarySrc).not.toMatch(/extractTarGz|extractZip|downloadFile/);
+    // No stray console side effects in a library module.
+    expect(binarySrc).not.toMatch(/console\.(log|warn)/);
+  });
 
-    it('windows binary has zip extension', () => {
-      expect(PLATFORM_MAP['win32-x64']).toMatch(/\.zip$/);
-    });
+  it('AC3: findBinary injects a no-download resolver step (delegation, not its own fetch)', () => {
+    // The wrapper suppresses resolveBinary's download step so discovery never reaches the network.
+    expect(binarySrc).toMatch(/download:\s*async/);
   });
 });

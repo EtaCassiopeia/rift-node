@@ -9,15 +9,10 @@
 
 import type { ImpostersConfig, Imposter, Stub, WireModel } from './types.js';
 
-/** Thrown when `fromJson` input is not well-formed imposter JSON. Carries the offending path. */
-export class WireValidationError extends Error {
-  readonly path: string;
-  constructor(message: string, path: string) {
-    super(`${message} (at ${path})`);
-    this.name = 'WireValidationError';
-    this.path = path;
-  }
-}
+// The wire codec's validation error is a first-class member of the SDK-wide RiftError hierarchy
+// (src/errors.ts). It is re-exported here so existing importers of './fromJson.js' are unaffected.
+export { WireValidationError } from '../errors.js';
+import { WireValidationError } from '../errors.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
