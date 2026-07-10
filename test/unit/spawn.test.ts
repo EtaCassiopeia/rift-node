@@ -123,7 +123,13 @@ describe('spawn — resolveBinary resolution order (injected IO)', () => {
     const got = await resolveBinary({
       env: {},
       fileExists: () => false,
-      lookupPath: (name) => (name === 'rift' ? '/usr/local/bin/rift' : null),
+      lookupPath: (name) => {
+        // Match any of the binary names (platform-independent)
+        if (name === 'rift' || name === 'rift.exe') {
+          return '/usr/local/bin/rift';
+        }
+        return null;
+      },
       download: download as unknown as (u: string, s: string | null) => Promise<string>,
     });
     expect(got).toBe('/usr/local/bin/rift');
