@@ -11,7 +11,6 @@
 import { jest } from '@jest/globals';
 import {
   connect,
-  rift,
   RiftError,
   InvalidDefinition,
   EngineUnavailable,
@@ -47,10 +46,11 @@ const json = (value: unknown, status = 200): Response =>
 const BASE = 'http://localhost:2525';
 
 describe('remote — connect', () => {
-  it('rift.connect and connect return a client bound to the admin url', () => {
+  // The async, version-preflighting `rift.connect` facade (issue #21) now lives at the package
+  // root (../../src/engine.js) and returns an `Engine`, not a bare client — see engine.test.ts.
+  it('connect returns a client bound to the admin url', () => {
     const c = connect(BASE);
     expect(c.url).toBe(BASE);
-    expect(rift.connect(BASE).url).toBe(BASE);
   });
 
   it('normalizes a trailing slash', () => {
@@ -124,7 +124,7 @@ describe('remote — scenario / space / flow-state / reload', () => {
     });
   });
 
-  it('flow-state operations (admin-prefixed); getFlowState returns null on 404', async () => {
+  it('flow-state operations (admin-prefixed); getFlowState returns undefined on 404', async () => {
     const fn = mockFetch(json({ flowId: 'f', key: 'k', value: 42 }));
     const c = connect(BASE);
     await c.setFlowState(4545, 'f', 'k', 42);
@@ -140,7 +140,7 @@ describe('remote — scenario / space / flow-state / reload', () => {
       url: `${BASE}/admin/imposters/4545/flow-state/f/k`,
     });
     mockFetch(new Response('', { status: 404 }));
-    expect(await c.getFlowState(4545, 'f', 'missing')).toBeNull();
+    expect(await c.getFlowState(4545, 'f', 'missing')).toBeUndefined();
   });
 
   it('reload → POST /admin/reload', async () => {
@@ -214,11 +214,17 @@ describe('remote — disposal contract', () => {
 });
 
 describe('remote — empty-body handling by endpoint kind', () => {
-  it('void endpoints tolerate an empty body (delete/reload)', async () => {
-    mockFetch(new Response('', { status: 200 }));
-    await expect(connect(BASE).deleteImposter(4545)).resolves.toBeUndefined();
+  it('reload tolerates an empty body', async () => {
     mockFetch(new Response('', { status: 200 }));
     await expect(connect(BASE).reload()).resolves.toBeUndefined();
+  });
+
+  // issue #21: deleteImposter now returns the deleted imposter (the engine echoes it back), so
+  // it is no longer an "empty body tolerated" endpoint — an empty body here is a communication
+  // failure, same as any other data endpoint.
+  it('deleteImposter returns the parsed deleted imposter', async () => {
+    mockFetch(json({ port: 4545, protocol: 'http' }));
+    await expect(connect(BASE).deleteImposter(4545)).resolves.toEqual({ port: 4545, protocol: 'http' });
   });
 
   it('data endpoints reject an empty body as CommunicationError', async () => {

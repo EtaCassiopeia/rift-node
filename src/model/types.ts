@@ -152,3 +152,15 @@ export interface RiftResponseExtension {
 
 /** Either the bulk envelope or a single imposter (the POST /imposters body). */
 export type WireModel = ImpostersConfig | Imposter;
+
+/** A single request recorded by an imposter (`GET /imposters/{port}/savedRequests`). */
+export interface RecordedRequest {
+  request_from?: string;
+  method: string;
+  path: string;
+  query?: Record<string, string | string[]>;
+  headers?: Record<string, string | string[]>;
+  body?: JsonValue;
+  timestamp?: string;
+  [key: string]: unknown;
+}
