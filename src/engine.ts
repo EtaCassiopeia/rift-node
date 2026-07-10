@@ -171,7 +171,9 @@ export interface RiftEngine extends AsyncDisposable {
 // --- helpers -------------------------------------------------------------------------------
 
 function toWireImposter(def: ImposterBuilder | Imposter): Imposter {
-  return def instanceof ImposterBuilder ? def.build() : def;
+  const wire = def instanceof ImposterBuilder ? def.build() : def;
+  // Protocol is required by Mountebank; default to 'http' if not specified
+  return wire.protocol === undefined ? { ...wire, protocol: 'http' } : wire;
 }
 
 function toWireStub(def: StubBuilder | Stub): Stub {
