@@ -5,7 +5,7 @@
  * missing emit, tsconfig not covering a subdir) that a src-only import test would miss.
  */
 
-import { execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -16,7 +16,7 @@ const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 
 describe('issue #25 — exports map resolves to built output (AC4)', () => {
   beforeAll(() => {
-    execFileSync('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'pipe' });
+    execSync('npm run build', { cwd: repoRoot, stdio: 'pipe', shell: true });
   }, 120_000);
 
   it('every exports subpath points to an emitted .js and .d.ts under dist/', () => {
@@ -33,6 +33,6 @@ describe('issue #25 — exports map resolves to built output (AC4)', () => {
     const script = specifiers.map((s) => `await import(${JSON.stringify(s)});`).join('\n');
     // Runs in a child node process with cwd at the package root so Node self-references `pkg.name`
     // via the exports map. Throws (non-zero exit) if any subpath fails to resolve or load.
-    execFileSync('node', ['--input-type=module', '-e', script], { cwd: repoRoot, stdio: 'pipe' });
+    execSync(`node --input-type=module -e "${script.replace(/"/g, '\\"')}"`, { cwd: repoRoot, stdio: 'pipe', shell: true });
   }, 30_000);
 });
