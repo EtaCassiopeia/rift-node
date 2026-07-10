@@ -42,6 +42,9 @@ export { fromJson, toWireJson, toWireString, WireValidationError } from './model
 // Fluent DSL builders (imposter/stub/response/predicate/scenario) that produce the wire model.
 export * from './dsl/index.js';
 
+// Fetch-based remote admin API client (issue #4): connect()/rift.connect() + typed RiftError hierarchy.
+export * from './remote/index.js';
+
 const DEFAULT_PORT = 2525;
 const DEFAULT_HOST = 'localhost';
 const STARTUP_TIMEOUT_MS = 30000;
