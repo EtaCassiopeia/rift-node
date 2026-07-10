@@ -10,7 +10,6 @@
  *   3. Run: npm run test:integration
  */
 
-import axios from 'axios';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import { create } from '../../src/index.js';
@@ -81,7 +80,7 @@ conditionalDescribe('Server Integration Tests', () => {
       const port = 3458;
       server = await create({ port });
 
-      const response = await axios.get(`http://localhost:${port}/`);
+      const response = await fetch(`http://localhost:${port}/`);
       expect(response.status).toBe(200);
     });
 
@@ -90,7 +89,7 @@ conditionalDescribe('Server Integration Tests', () => {
       server = await create({ port });
 
       // Server should be running
-      const response1 = await axios.get(`http://localhost:${port}/`);
+      const response1 = await fetch(`http://localhost:${port}/`);
       expect(response1.status).toBe(200);
 
       // Close the server
@@ -98,7 +97,7 @@ conditionalDescribe('Server Integration Tests', () => {
       server = null;
 
       // Server should no longer be reachable
-      await expect(axios.get(`http://localhost:${port}/`, { timeout: 1000 })).rejects.toThrow();
+      await expect(fetch(`http://localhost:${port}/`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
     });
 
     it('can close multiple times without error', async () => {
@@ -128,8 +127,8 @@ conditionalDescribe('Server Integration Tests', () => {
 
       // Both should respond
       const [response1, response2] = await Promise.all([
-        axios.get('http://localhost:3461/'),
-        axios.get('http://localhost:3462/'),
+        fetch('http://localhost:3461/'),
+        fetch('http://localhost:3462/'),
       ]);
 
       expect(response1.status).toBe(200);

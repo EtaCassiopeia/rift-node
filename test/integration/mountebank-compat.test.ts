@@ -7,11 +7,24 @@
  * Requires the rift-http-proxy binary with --mountebank support.
  */
 
-import axios, { AxiosError } from 'axios';
 import fs from 'fs';
 import { execSync } from 'child_process';
 import { create } from '../../src/index.js';
 import type { RiftServer, ImposterConfig, Imposter } from '../../src/types.js';
+
+// POST an imposter and assert the create succeeded. `fetch` (unlike axios) does not throw on a
+// non-2xx status, so setup POSTs must be checked explicitly — otherwise a broken create silently
+// leaves later "imposter is absent" assertions trivially true.
+async function postImposter(baseUrl: string, imposter: unknown): Promise<void> {
+  const res = await fetch(`${baseUrl}/imposters`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(imposter),
+  });
+  if (!res.ok) {
+    throw new Error(`imposter setup POST failed: ${res.status} ${await res.text()}`);
+  }
+}
 
 // Synchronous check at module load time
 function checkBinarySync(): boolean {
@@ -62,7 +75,7 @@ conditionalDescribe('Mountebank API Compatibility', () => {
     beforeEach(async () => {
       // Clean up imposters before each test
       try {
-        await axios.delete(`${baseUrl}/imposters`);
+        await fetch(`${baseUrl}/imposters`, { method: 'DELETE' });
       } catch {
         // Ignore if delete fails
       }
@@ -70,24 +83,26 @@ conditionalDescribe('Mountebank API Compatibility', () => {
 
     describe('GET /', () => {
       it('returns server info', async () => {
-        const response = await axios.get(`${baseUrl}/`);
+        const response = await fetch(`${baseUrl}/`);
+        const body = (await response.json()) as any;
 
         expect(response.status).toBe(200);
         // Rift returns _links structure for API navigation
-        expect(response.data).toHaveProperty('_links');
-        expect(response.data._links).toHaveProperty('imposters');
-        expect(response.data._links).toHaveProperty('config');
-        expect(response.data._links).toHaveProperty('logs');
+        expect(body).toHaveProperty('_links');
+        expect(body._links).toHaveProperty('imposters');
+        expect(body._links).toHaveProperty('config');
+        expect(body._links).toHaveProperty('logs');
       });
     });
 
     describe('GET /imposters', () => {
       it('returns empty list when no imposters', async () => {
-        const response = await axios.get(`${baseUrl}/imposters`);
+        const response = await fetch(`${baseUrl}/imposters`);
+        const body = (await response.json()) as any;
 
         expect(response.status).toBe(200);
-        expect(response.data).toHaveProperty('imposters');
-        expect(response.data.imposters).toEqual([]);
+        expect(body).toHaveProperty('imposters');
+        expect(body.imposters).toEqual([]);
       });
 
       it('returns list of imposters', async () => {
@@ -102,13 +117,18 @@ conditionalDescribe('Mountebank API Compatibility', () => {
           ],
         };
 
-        await axios.post(`${baseUrl}/imposters`, imposter);
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(imposter),
+        });
 
-        const response = await axios.get(`${baseUrl}/imposters`);
+        const response = await fetch(`${baseUrl}/imposters`);
+        const body = (await response.json()) as any;
 
         expect(response.status).toBe(200);
-        expect(response.data.imposters.length).toBeGreaterThan(0);
-        expect(response.data.imposters.some((i: Imposter) => i.port === 4545)).toBe(true);
+        expect(body.imposters.length).toBeGreaterThan(0);
+        expect(body.imposters.some((i: Imposter) => i.port === 4545)).toBe(true);
       });
     });
 
@@ -132,11 +152,16 @@ conditionalDescribe('Mountebank API Compatibility', () => {
           ],
         };
 
-        const response = await axios.post(`${baseUrl}/imposters`, imposter);
+        const response = await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(imposter),
+        });
+        const body = (await response.json()) as any;
 
         expect(response.status).toBe(201);
-        expect(response.data.port).toBe(4546);
-        expect(response.data.protocol).toBe('http');
+        expect(body.port).toBe(4546);
+        expect(body.protocol).toBe('http');
       });
 
       it('imposter responds to requests', async () => {
@@ -158,13 +183,18 @@ conditionalDescribe('Mountebank API Compatibility', () => {
           ],
         };
 
-        await axios.post(`${baseUrl}/imposters`, imposter);
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(imposter),
+        });
 
         // Make a request to the imposter
-        const response = await axios.get('http://localhost:4547/');
+        const response = await fetch('http://localhost:4547/');
+        const body = await response.text();
 
         expect(response.status).toBe(200);
-        expect(response.data).toBe('Hello from imposter!');
+        expect(body).toBe('Hello from imposter!');
       });
 
       it('creates imposter with predicates', async () => {
@@ -193,10 +223,14 @@ conditionalDescribe('Mountebank API Compatibility', () => {
           ],
         };
 
-        await axios.post(`${baseUrl}/imposters`, imposter);
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(imposter),
+        });
 
         // Matching request should return 200
-        const matchResponse = await axios.get('http://localhost:4548/api/users');
+        const matchResponse = await fetch('http://localhost:4548/api/users');
         expect(matchResponse.status).toBe(200);
 
         // Note: Default response for non-matching requests varies between Rift and Mountebank
@@ -217,23 +251,23 @@ conditionalDescribe('Mountebank API Compatibility', () => {
           ],
         };
 
-        await axios.post(`${baseUrl}/imposters`, imposter);
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(imposter),
+        });
 
-        const response = await axios.get(`${baseUrl}/imposters/4549`);
+        const response = await fetch(`${baseUrl}/imposters/4549`);
+        const body = (await response.json()) as any;
 
         expect(response.status).toBe(200);
-        expect(response.data.port).toBe(4549);
-        expect(response.data.name).toBe('Test Imposter');
+        expect(body.port).toBe(4549);
+        expect(body.name).toBe('Test Imposter');
       });
 
       it('returns 404 for non-existent imposter', async () => {
-        try {
-          await axios.get(`${baseUrl}/imposters/9999`);
-          fail('Should have thrown');
-        } catch (error) {
-          const axiosError = error as AxiosError;
-          expect(axiosError.response?.status).toBe(404);
-        }
+        const response = await fetch(`${baseUrl}/imposters/9999`);
+        expect(response.status).toBe(404);
       });
     });
 
@@ -245,64 +279,77 @@ conditionalDescribe('Mountebank API Compatibility', () => {
           stubs: [{ responses: [{ is: { statusCode: 200 } }] }],
         };
 
-        await axios.post(`${baseUrl}/imposters`, imposter);
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(imposter),
+        });
 
         // Verify it exists
-        const before = await axios.get(`${baseUrl}/imposters/4550`);
+        const before = await fetch(`${baseUrl}/imposters/4550`);
         expect(before.status).toBe(200);
 
         // Delete it
-        const deleteResponse = await axios.delete(`${baseUrl}/imposters/4550`);
+        const deleteResponse = await fetch(`${baseUrl}/imposters/4550`, { method: 'DELETE' });
         expect(deleteResponse.status).toBe(200);
 
         // Verify it's gone
-        try {
-          await axios.get(`${baseUrl}/imposters/4550`);
-          fail('Should have thrown');
-        } catch (error) {
-          const axiosError = error as AxiosError;
-          expect(axiosError.response?.status).toBe(404);
-        }
+        const after = await fetch(`${baseUrl}/imposters/4550`);
+        expect(after.status).toBe(404);
       });
     });
 
     describe('DELETE /imposters', () => {
       it('deletes all imposters', async () => {
         // Create multiple imposters
-        await axios.post(`${baseUrl}/imposters`, {
-          port: 4551,
-          protocol: 'http',
-          stubs: [{ responses: [{ is: { statusCode: 200 } }] }],
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            port: 4551,
+            protocol: 'http',
+            stubs: [{ responses: [{ is: { statusCode: 200 } }] }],
+          }),
         });
 
-        await axios.post(`${baseUrl}/imposters`, {
-          port: 4552,
-          protocol: 'http',
-          stubs: [{ responses: [{ is: { statusCode: 200 } }] }],
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            port: 4552,
+            protocol: 'http',
+            stubs: [{ responses: [{ is: { statusCode: 200 } }] }],
+          }),
         });
 
         // Verify they exist
-        const before = await axios.get(`${baseUrl}/imposters`);
-        expect(before.data.imposters.length).toBeGreaterThanOrEqual(2);
+        const before = await fetch(`${baseUrl}/imposters`);
+        const beforeBody = (await before.json()) as any;
+        expect(beforeBody.imposters.length).toBeGreaterThanOrEqual(2);
 
         // Delete all
-        const deleteResponse = await axios.delete(`${baseUrl}/imposters`);
+        const deleteResponse = await fetch(`${baseUrl}/imposters`, { method: 'DELETE' });
         expect(deleteResponse.status).toBe(200);
 
         // Verify all are gone
-        const after = await axios.get(`${baseUrl}/imposters`);
-        expect(after.data.imposters.length).toBe(0);
+        const after = await fetch(`${baseUrl}/imposters`);
+        const afterBody = (await after.json()) as any;
+        expect(afterBody.imposters.length).toBe(0);
       });
     });
 
     describe('PUT /imposters', () => {
       it('replaces all imposters', async () => {
-        // Create initial imposter
-        await axios.post(`${baseUrl}/imposters`, {
+        // Create initial imposter (asserts creation succeeded, so the later not.toContain is meaningful)
+        await postImposter(baseUrl, {
           port: 4553,
           protocol: 'http',
           stubs: [{ responses: [{ is: { statusCode: 200 } }] }],
         });
+
+        // Confirm it is present before the replace, so removing it is what we actually test.
+        const beforeList = (await (await fetch(`${baseUrl}/imposters`)).json()) as any;
+        expect(beforeList.imposters.map((i: Imposter) => i.port)).toContain(4553);
 
         // Replace with new set
         const newImposters = {
@@ -320,12 +367,17 @@ conditionalDescribe('Mountebank API Compatibility', () => {
           ],
         };
 
-        const response = await axios.put(`${baseUrl}/imposters`, newImposters);
+        const response = await fetch(`${baseUrl}/imposters`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(newImposters),
+        });
         expect(response.status).toBe(200);
 
         // Verify old imposter is gone and new ones exist
-        const list = await axios.get(`${baseUrl}/imposters`);
-        const ports = list.data.imposters.map((i: Imposter) => i.port);
+        const list = await fetch(`${baseUrl}/imposters`);
+        const listBody = (await list.json()) as any;
+        const ports = listBody.imposters.map((i: Imposter) => i.port);
 
         expect(ports).not.toContain(4553);
         expect(ports).toContain(4554);
@@ -336,20 +388,25 @@ conditionalDescribe('Mountebank API Compatibility', () => {
     describe('POST /imposters/:port/stubs', () => {
       it('adds stub to existing imposter', async () => {
         // Create imposter with one stub
-        await axios.post(`${baseUrl}/imposters`, {
-          port: 4556,
-          protocol: 'http',
-          stubs: [
-            {
-              predicates: [{ equals: { path: '/first' } }],
-              responses: [{ is: { statusCode: 200, body: 'first' } }],
-            },
-          ],
+        await fetch(`${baseUrl}/imposters`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            port: 4556,
+            protocol: 'http',
+            stubs: [
+              {
+                predicates: [{ equals: { path: '/first' } }],
+                responses: [{ is: { statusCode: 200, body: 'first' } }],
+              },
+            ],
+          }),
         });
 
         // Verify the first stub works
-        const firstResponse = await axios.get('http://localhost:4556/first');
-        expect(firstResponse.data).toBe('first');
+        const firstResponse = await fetch('http://localhost:4556/first');
+        const firstBody = await firstResponse.text();
+        expect(firstBody).toBe('first');
 
         // Note: POST /imposters/:port/stubs may have different behavior in Rift
         // For full stub management, recreate the imposter with all stubs included

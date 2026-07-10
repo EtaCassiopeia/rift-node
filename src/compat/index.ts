@@ -1,0 +1,197 @@
+/**
+ * Mountebank-compatible `create()` layer — a permanent, first-class compat surface.
+ *
+ * This is a drop-in replacement for Mountebank's `mb.create()`: it spawns the Rift binary as a
+ * child process and returns a {@link RiftServer} handle. It deliberately preserves the historical
+ * contract — including its quirks — so existing `@rift-vs/rift` and Mountebank users upgrade without
+ * rewrites. New code should prefer the typed DSL + transports (`rift.spawn()` / `rift.connect()` /
+ * `rift.embedded()`).
+ *
+ * @example
+ * ```ts
+ * import { create } from '@rift-vs/rift/compat';
+ * const server = await create({ port: 2525 });
+ * await server.close();
+ * ```
+ */
+
+import { spawn as spawnProcess, ChildProcess } from 'child_process';
+import { EventEmitter } from 'events';
+import { findBinary } from '../binary.js';
+import { resolveBinary } from '../spawn/resolve.js';
+import type { CreateOptions, RiftServer } from '../types.js';
+
+const DEFAULT_PORT = 2525;
+const DEFAULT_HOST = 'localhost';
+const STARTUP_TIMEOUT_MS = 30000;
+const HEALTH_CHECK_INTERVAL_MS = 100;
+const SHUTDOWN_TIMEOUT_MS = 5000;
+
+/** Internal implementation of {@link RiftServer}. */
+class RiftServerImpl extends EventEmitter implements RiftServer {
+  public readonly port: number;
+  public readonly host: string;
+  private process: ChildProcess | null;
+  private isClosed = false;
+
+  constructor(port: number, host: string, process: ChildProcess) {
+    super();
+    this.port = port;
+    this.host = host;
+    this.process = process;
+
+    process.on('exit', (code, signal) => this.emit('exit', code, signal));
+    process.on('error', (error) => this.emit('error', error));
+    process.stdout?.on('data', (data) => this.emit('stdout', data.toString()));
+    process.stderr?.on('data', (data) => this.emit('stderr', data.toString()));
+  }
+
+  /** Gracefully close the server (SIGTERM, then SIGKILL after a timeout). Idempotent. */
+  async close(): Promise<void> {
+    if (this.isClosed || !this.process) {
+      return;
+    }
+    this.isClosed = true;
+    const proc = this.process;
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        proc.kill('SIGKILL');
+        resolve();
+      }, SHUTDOWN_TIMEOUT_MS);
+
+      proc.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+
+      proc.kill('SIGTERM');
+    });
+  }
+}
+
+/** Build CLI arguments from {@link CreateOptions}. */
+function buildCliArgs(options: CreateOptions): string[] {
+  const args: string[] = [];
+  args.push('--port', String(options.port || DEFAULT_PORT));
+  if (options.host) {
+    args.push('--host', options.host);
+  }
+  if (options.loglevel) {
+    args.push('--loglevel', options.loglevel);
+  }
+  if (options.logfile) {
+    args.push('--log', options.logfile);
+  }
+  if (options.allowInjection) {
+    args.push('--allow-injection');
+  }
+  if (options.ipWhitelist && options.ipWhitelist.length > 0) {
+    args.push('--ip-whitelist', options.ipWhitelist.join(','));
+  }
+  // Note: `redis` and `impostersRepository` are accepted-and-ignored for Mountebank compatibility;
+  // configure distributed flow state per-imposter via the DSL's `flowState()` instead.
+  return args;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Poll the server root until it responds, or the timeout elapses.
+ *
+ * @internal Exported for testing.
+ *
+ * Preserves the historical readiness semantics: **any** HTTP response — including an error status —
+ * means the server is up. `fetch` only rejects on a transport failure (e.g. connection refused), so
+ * a returned `Response` of any status resolves this immediately; a rejection means retry.
+ */
+export async function waitForServer(host: string, port: number, timeoutMs: number): Promise<void> {
+  const startTime = Date.now();
+  const url = `http://${host}:${port}/`;
+  let lastError: unknown;
+
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      await fetch(url, { signal: AbortSignal.timeout(1000) });
+      return;
+    } catch (err) {
+      // Any transport rejection means "not up yet" — retry. Retain the reason for the final throw so
+      // a misconfigured host (e.g. ENOTFOUND) is diagnosable instead of a bare "did not start".
+      lastError = err;
+      await sleep(HEALTH_CHECK_INTERVAL_MS);
+    }
+  }
+
+  const detail = lastError ? ` (last error: ${String(lastError)})` : '';
+  throw new Error(`Rift server did not start within ${timeoutMs}ms${detail}`);
+}
+
+/**
+ * Resolve the engine binary for `create()`.
+ *
+ * Preserves the legacy discovery order for any locally-present binary (`findBinary()`), then falls
+ * through to the reworked resolver's version cache + on-demand download whose checksum/air-gap
+ * errors propagate rather than being masked.
+ */
+async function resolveEngineBinary(): Promise<string> {
+  try {
+    return await findBinary();
+  } catch {
+    // Nothing found locally — fall through to the cache/download resolver.
+  }
+  return await resolveBinary();
+}
+
+/**
+ * Create a Rift server, Mountebank-`mb.create()`-compatibly.
+ *
+ * @param options Server configuration. `redis` and `impostersRepository` are accepted-and-ignored
+ *   (Mountebank compatibility) — configure flow state per-imposter via the DSL's `flowState()`.
+ * @returns A {@link RiftServer} handle.
+ */
+export async function create(options: CreateOptions = {}): Promise<RiftServer> {
+  const port = options.port || DEFAULT_PORT;
+  const host = options.host || DEFAULT_HOST;
+  const args = buildCliArgs(options);
+
+  const binaryPath = await resolveEngineBinary();
+
+  const proc = spawnProcess(binaryPath, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+
+  let stderr = '';
+  proc.stderr?.on('data', (data) => {
+    stderr += data.toString();
+  });
+
+  proc.on('error', (error) => {
+    throw new Error(`Failed to start Rift: ${error.message}`);
+  });
+
+  const earlyExitPromise = new Promise<never>((_, reject) => {
+    proc.once('exit', (code, signal) => {
+      if (code !== null && code !== 0) {
+        reject(new Error(`Rift process exited with code ${code}.\nStderr: ${stderr || 'none'}`));
+      } else if (signal) {
+        reject(new Error(`Rift process killed by signal ${signal}`));
+      }
+    });
+  });
+
+  try {
+    await Promise.race([waitForServer(host, port, STARTUP_TIMEOUT_MS), earlyExitPromise]);
+  } catch (error) {
+    proc.kill('SIGKILL');
+    throw error;
+  }
+
+  return new RiftServerImpl(port, host, proc);
+}
+
+export type { CreateOptions, RedisOptions, RiftServer } from '../types.js';
+
+export default { create };
