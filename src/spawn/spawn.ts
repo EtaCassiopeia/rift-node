@@ -9,7 +9,7 @@
 
 import { type ChildProcess, spawn as spawnProcess } from 'child_process';
 import net from 'net';
-import { connect, rift, type RemoteClient } from '../remote/index.js';
+import { RemoteClient } from '../remote/index.js';
 import { resolveBinary, type EnvRecord } from './resolve.js';
 
 const DEFAULT_HOST = 'localhost';
@@ -18,13 +18,62 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
 const HEALTH_CHECK_INTERVAL_MS = 100;
 
 /** Builds the Rift engine CLI args for a given admin port. */
-export function buildSpawnArgs(port: number, opts: { host?: string; loglevel?: string } = {}): string[] {
+export function buildSpawnArgs(
+  port: number,
+  opts: {
+    host?: string;
+    loglevel?: string;
+    allowInjection?: boolean;
+    apiKey?: string;
+    localOnly?: boolean;
+    ipWhitelist?: string[];
+    origin?: string;
+    datadir?: string;
+    configfile?: string;
+    defaultTls?: { cert: string; key: string };
+    metricsPort?: number;
+    intercept?: boolean | { port?: number };
+  } = {}
+): string[] {
   const args = ['--port', String(port)];
   if (opts.host) {
     args.push('--host', opts.host);
   }
   if (opts.loglevel) {
     args.push('--loglevel', opts.loglevel);
+  }
+  if (opts.allowInjection) {
+    args.push('--allow-injection');
+  }
+  if (opts.apiKey !== undefined) {
+    args.push('--api-key', opts.apiKey);
+  }
+  if (opts.localOnly) {
+    args.push('--local-only');
+  }
+  if (opts.ipWhitelist && opts.ipWhitelist.length > 0) {
+    args.push('--ip-whitelist', opts.ipWhitelist.join(','));
+  }
+  if (opts.origin !== undefined) {
+    args.push('--origin', opts.origin);
+  }
+  if (opts.datadir !== undefined) {
+    args.push('--datadir', opts.datadir);
+  }
+  if (opts.configfile !== undefined) {
+    args.push('--configfile', opts.configfile);
+  }
+  if (opts.defaultTls !== undefined) {
+    args.push('--default-tls-cert', opts.defaultTls.cert, '--default-tls-key', opts.defaultTls.key);
+  }
+  if (opts.metricsPort !== undefined) {
+    args.push('--metrics-port', String(opts.metricsPort));
+  }
+  if (opts.intercept === true) {
+    args.push('--intercept-port', '0');
+  } else if (typeof opts.intercept === 'object' && opts.intercept !== null) {
+    // Any options object enables intercept; an unspecified port means "pick an ephemeral one" (0).
+    args.push('--intercept-port', String(opts.intercept.port ?? 0));
   }
   return args;
 }
@@ -42,6 +91,26 @@ export interface SpawnOptions {
   mirror?: string;
   startupTimeoutMs?: number;
   shutdownTimeoutMs?: number;
+  /** --allow-injection */
+  allowInjection?: boolean;
+  /** --api-key (also used by the client for the Authorization header). */
+  apiKey?: string;
+  /** --local-only */
+  localOnly?: boolean;
+  /** --ip-whitelist a,b,... */
+  ipWhitelist?: string[];
+  /** --origin */
+  origin?: string;
+  /** --datadir */
+  datadir?: string;
+  /** --configfile */
+  configfile?: string;
+  /** --default-tls-cert / --default-tls-key */
+  defaultTls?: { cert: string; key: string };
+  /** --metrics-port */
+  metricsPort?: number;
+  /** --intercept-port (+ CA paths, once wired — issue #11). `true` picks an ephemeral port. */
+  intercept?: boolean | { port?: number };
 }
 
 export interface SpawnedEngine {
@@ -132,7 +201,20 @@ export async function spawn(opts: SpawnOptions = {}): Promise<SpawnedEngine> {
   });
 
   const port = opts.port ?? (await findFreePort());
-  const args = buildSpawnArgs(port, { host, loglevel: opts.loglevel });
+  const args = buildSpawnArgs(port, {
+    host,
+    loglevel: opts.loglevel,
+    allowInjection: opts.allowInjection,
+    apiKey: opts.apiKey,
+    localOnly: opts.localOnly,
+    ipWhitelist: opts.ipWhitelist,
+    origin: opts.origin,
+    datadir: opts.datadir,
+    configfile: opts.configfile,
+    defaultTls: opts.defaultTls,
+    metricsPort: opts.metricsPort,
+    intercept: opts.intercept,
+  });
 
   const proc = spawnProcess(binaryPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -175,13 +257,10 @@ export async function spawn(opts: SpawnOptions = {}): Promise<SpawnedEngine> {
   return {
     url,
     port,
-    client: connect(url),
+    client: new RemoteClient(url, opts.apiKey !== undefined ? { apiKey: opts.apiKey } : {}),
     close,
     async [Symbol.asyncDispose](): Promise<void> {
       await close();
     },
   };
 }
-
-// Attach to the shared `rift` facade so `rift.spawn(...)` works alongside `rift.connect(...)`.
-rift.spawn = spawn;

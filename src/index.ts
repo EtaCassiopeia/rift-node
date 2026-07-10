@@ -29,13 +29,27 @@ export { fromJson, toWireJson, toWireString } from './model/index.js';
 // Fluent DSL builders (imposter/stub/response/predicate/scenario) that produce the wire model.
 export * from './dsl/index.js';
 
-// Transports. `connect`/`rift` come straight from the remote client (the remote barrel also
-// re-exports the errors, which we already surface from `./errors.js`).
-export { connect, rift } from './remote/client.js';
-export type { RemoteClient, FlowScopedOptions } from './remote/client.js';
+// Low-level escape hatch: a synchronous `connect(url) -> RemoteClient` (no version preflight).
+export { connect } from './remote/client.js';
+export type { RemoteClient, RemoteClientOptions, FlowScopedOptions } from './remote/client.js';
 
-// Spawn transport + reworked binary resolver. Importing this attaches `rift.spawn`.
+// Spawn transport + reworked binary resolver.
 export * from './spawn/index.js';
+
+// The client API facade (issue #21): `RiftEngine` + handles implemented once over `AdminApi`.
+// `rift.connect`/`rift.spawn`/`rift.embedded` are the async, Engine-returning entry points.
+export { rift, Engine } from './engine.js';
+export type {
+  RiftEngine,
+  ImposterHandle,
+  SpaceHandle,
+  FlowStateHandle,
+  ImposterSummary,
+  BuildInfo,
+  Transport,
+  AdminApi,
+  ConnectOptions,
+} from './engine.js';
 
 // Binary discovery helpers (thin wrappers over the resolver; kept for compatibility).
 export { findBinary, downloadBinary, getBinaryVersion } from './binary.js';

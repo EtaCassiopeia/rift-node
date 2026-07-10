@@ -6,7 +6,7 @@
  * private `request`/`rawFetch` helpers so the mapping table lives in exactly one place.
  */
 
-import type { Imposter, ImpostersConfig } from '../model/index.js';
+import type { Imposter, ImpostersConfig, RecordedRequest, Stub } from '../model/index.js';
 import {
   CommunicationError,
   EngineError,
@@ -15,9 +15,9 @@ import {
   InvalidDefinition,
   RiftError,
 } from './errors.js';
-// Type-only: erased at compile time, so this does not create a runtime import cycle even though
-// ../spawn/spawn.js imports `rift` (below) from this module to attach `.spawn` at load time.
-import type { SpawnFn } from '../spawn/spawn.js';
+// Type-only: erased at compile time (isolatedModules), so this does not create a runtime import
+// cycle even though ../engine.js imports `RemoteClient` (below) as its remote AdminApi impl.
+import type { AdminApi } from '../engine.js';
 
 /** Shape of the engine's JSON error envelope: `{ "errors": [{ "code": "...", "message": "..." }] }`. */
 interface EngineErrorBody {
@@ -29,14 +29,34 @@ export interface FlowScopedOptions {
   flowId?: string;
 }
 
-export class RemoteClient {
+/** Construction options for {@link RemoteClient}. */
+export interface RemoteClientOptions {
+  /** Sent as `Authorization: Bearer <apiKey>` on every request. */
+  apiKey?: string;
+  /** Base headers for every request. The API-key `authorization` (if any) and the per-request
+   * `content-type` are applied on top, so they take precedence over a same-named entry here. */
+  headers?: Record<string, string>;
+  /** Per-request timeout; a request that exceeds this is aborted and surfaces as `EngineUnavailable`. */
+  timeoutMs?: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+export class RemoteClient implements AdminApi {
   /** Base admin URL, trailing slash stripped. */
   readonly url: string;
 
   #closed = false;
+  readonly #headers: Record<string, string>;
+  readonly #timeoutMs: number;
 
-  constructor(url: string) {
+  constructor(url: string, opts: RemoteClientOptions = {}) {
     this.url = url;
+    this.#timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.#headers = { ...opts.headers };
+    if (opts.apiKey !== undefined) {
+      this.#headers['authorization'] = `Bearer ${opts.apiKey}`;
+    }
   }
 
   // --- imposters ---
@@ -45,16 +65,22 @@ export class RemoteClient {
     return this.request<Imposter>('/imposters', { method: 'POST', body: imposter });
   }
 
-  async listImposters(): Promise<ImpostersConfig> {
-    return this.request<ImpostersConfig>('/imposters', { method: 'GET' });
+  async listImposters(opts?: { replayable?: boolean }): Promise<ImpostersConfig> {
+    const qs = this.toQuery({ replayable: opts?.replayable });
+    return this.request<ImpostersConfig>(`/imposters${qs}`, { method: 'GET' });
   }
 
-  async getImposter(port: number): Promise<Imposter> {
-    return this.request<Imposter>(`/imposters/${port}`, { method: 'GET' });
+  async getImposter(
+    port: number,
+    opts?: { replayable?: boolean; removeProxies?: boolean }
+  ): Promise<Imposter> {
+    const qs = this.toQuery({ replayable: opts?.replayable, removeProxies: opts?.removeProxies });
+    return this.request<Imposter>(`/imposters/${port}${qs}`, { method: 'GET' });
   }
 
-  async deleteImposter(port: number): Promise<void> {
-    await this.request(`/imposters/${port}`, { method: 'DELETE', allowEmpty: true });
+  /** Returns the deleted imposter, as the engine echoes it back in the response body. */
+  async deleteImposter(port: number): Promise<Imposter> {
+    return this.request<Imposter>(`/imposters/${port}`, { method: 'DELETE' });
   }
 
   async deleteAllImposters(): Promise<void> {
@@ -65,10 +91,72 @@ export class RemoteClient {
     return this.request<ImpostersConfig>('/imposters', { method: 'PUT', body: config });
   }
 
+  // --- stubs ---
+
+  async addStub(port: number, stub: Stub, index?: number): Promise<void> {
+    const body = index !== undefined ? { stub, index } : { stub };
+    await this.request(`/imposters/${port}/stubs`, { method: 'POST', body, allowEmpty: true });
+  }
+
+  async replaceStubs(port: number, stubs: Stub[]): Promise<void> {
+    await this.request(`/imposters/${port}/stubs`, {
+      method: 'PUT',
+      body: { stubs },
+      allowEmpty: true,
+    });
+  }
+
+  async getStub(port: number, ref: number | { id: string }): Promise<Stub> {
+    return this.request<Stub>(this.stubPath(port, ref), { method: 'GET' });
+  }
+
+  async updateStub(port: number, ref: number | { id: string }, stub: Stub): Promise<void> {
+    await this.request(this.stubPath(port, ref), { method: 'PUT', body: stub, allowEmpty: true });
+  }
+
+  async deleteStub(port: number, ref: number | { id: string }): Promise<void> {
+    await this.request(this.stubPath(port, ref), { method: 'DELETE', allowEmpty: true });
+  }
+
+  // --- saved requests / proxy responses ---
+
+  async getSavedRequests(port: number, match?: string[]): Promise<RecordedRequest[]> {
+    return this.request<RecordedRequest[]>(`/imposters/${port}/savedRequests${this.matchQuery(match)}`, {
+      method: 'GET',
+    });
+  }
+
+  async deleteSavedRequests(port: number, match?: string[]): Promise<void> {
+    await this.request(`/imposters/${port}/savedRequests${this.matchQuery(match)}`, {
+      method: 'DELETE',
+      allowEmpty: true,
+    });
+  }
+
+  async deleteSavedProxyResponses(port: number): Promise<void> {
+    await this.request(`/imposters/${port}/savedProxyResponses`, {
+      method: 'DELETE',
+      allowEmpty: true,
+    });
+  }
+
+  // --- enable/disable ---
+
+  async enableImposter(port: number): Promise<void> {
+    await this.request(`/imposters/${port}/enable`, { method: 'POST', allowEmpty: true });
+  }
+
+  async disableImposter(port: number): Promise<void> {
+    await this.request(`/imposters/${port}/disable`, { method: 'POST', allowEmpty: true });
+  }
+
   // --- scenarios ---
 
-  async getScenarios<T = unknown>(port: number, opts?: FlowScopedOptions): Promise<T> {
-    return this.request<T>(`/imposters/${port}/scenarios${this.flowQuery(opts)}`, {
+  async getScenarios(
+    port: number,
+    opts?: FlowScopedOptions
+  ): Promise<{ flowId: string; scenarios: Array<{ name: string; state: string }> }> {
+    return this.request(`/imposters/${port}/scenarios${this.flowQuery(opts)}`, {
       method: 'GET',
     });
   }
@@ -96,6 +184,21 @@ export class RemoteClient {
 
   // --- spaces ---
 
+  async addSpaceStub(port: number, flowId: string, stub: Stub): Promise<void> {
+    await this.request(`/imposters/${port}/spaces/${encodeURIComponent(flowId)}/stubs`, {
+      method: 'POST',
+      body: { stub },
+      allowEmpty: true,
+    });
+  }
+
+  async listSpaceStubs(port: number, flowId: string): Promise<{ space: string; stubs: Stub[] }> {
+    return this.request<{ space: string; stubs: Stub[] }>(
+      `/imposters/${port}/spaces/${encodeURIComponent(flowId)}/stubs`,
+      { method: 'GET' }
+    );
+  }
+
   async getSpace<T = unknown>(port: number, flowId: string): Promise<T> {
     return this.request<T>(`/imposters/${port}/spaces/${encodeURIComponent(flowId)}`, {
       method: 'GET',
@@ -111,10 +214,10 @@ export class RemoteClient {
 
   // --- flow state (admin-prefixed) ---
 
-  /** Returns the parsed value, or `null` if the key is absent (engine responds 404). */
-  async getFlowState<T = unknown>(port: number, flowId: string, key: string): Promise<T | null> {
+  /** Returns the parsed value, or `undefined` if the key is absent (engine responds 404). */
+  async getFlowState<T = unknown>(port: number, flowId: string, key: string): Promise<T | undefined> {
     const response = await this.rawFetch(this.flowStateUrl(port, flowId, key), { method: 'GET' });
-    if (response.status === 404) return null;
+    if (response.status === 404) return undefined;
     if (!response.ok) return this.throwForStatus(response);
     return this.parseJsonBody<T>(response, false);
   }
@@ -136,8 +239,20 @@ export class RemoteClient {
 
   // --- admin ---
 
-  async reload(): Promise<void> {
-    await this.request('/admin/reload', { method: 'POST', allowEmpty: true });
+  async config(): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>('/config', { method: 'GET' });
+  }
+
+  async logs(opts?: { startIndex?: number; endIndex?: number }): Promise<unknown[]> {
+    const params = new URLSearchParams();
+    if (opts?.startIndex !== undefined) params.set('startIndex', String(opts.startIndex));
+    if (opts?.endIndex !== undefined) params.set('endIndex', String(opts.endIndex));
+    const qs = params.toString();
+    return this.request<unknown[]>(`/logs${qs ? `?${qs}` : ''}`, { method: 'GET' });
+  }
+
+  async reload(): Promise<unknown> {
+    return this.request<unknown>('/admin/reload', { method: 'POST', allowEmpty: true });
   }
 
   // --- disposal ---
@@ -156,6 +271,30 @@ export class RemoteClient {
   }
 
   // --- internals ---
+
+  private stubPath(port: number, ref: number | { id: string }): string {
+    return typeof ref === 'number'
+      ? `/imposters/${port}/stubs/${ref}`
+      : `/imposters/${port}/stubs/by-id/${encodeURIComponent(ref.id)}`;
+  }
+
+  /** Builds `?flag=true` query strings, only including flags that are actually set. */
+  private toQuery(flags: Record<string, boolean | undefined>): string {
+    const params = new URLSearchParams();
+    for (const [name, value] of Object.entries(flags)) {
+      if (value === true) params.set(name, 'true');
+    }
+    const qs = params.toString();
+    return qs ? `?${qs}` : '';
+  }
+
+  /** Encodes zero or more `match=` filters as repeated query params (savedRequests get/delete). */
+  private matchQuery(match?: string[]): string {
+    if (match === undefined || match.length === 0) return '';
+    const params = new URLSearchParams();
+    for (const m of match) params.append('match', m);
+    return `?${params.toString()}`;
+  }
 
   private flowQuery(opts?: FlowScopedOptions): string {
     return opts?.flowId !== undefined ? `?flowId=${encodeURIComponent(opts.flowId)}` : '';
@@ -181,27 +320,29 @@ export class RemoteClient {
   }
 
   private toRequestInit(init: { method: string; body?: unknown }): RequestInit {
-    if (init.body === undefined) {
-      return { method: init.method };
-    }
+    const headers = { ...this.#headers, ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}) };
     return {
       method: init.method,
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(init.body),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     };
   }
 
-  /** Wraps `fetch` so a rejected fetch (connection refused, DNS failure, ...) becomes a typed
-   * `EngineUnavailable` instead of an opaque `TypeError`. */
+  /** Wraps `fetch` so a rejected fetch (connection refused, DNS failure, timeout, ...) becomes a
+   * typed `EngineUnavailable` instead of an opaque `TypeError`/`AbortError`. */
   private async rawFetch(url: string, init: RequestInit): Promise<Response> {
     if (this.#closed) {
       throw new RiftError('client is closed');
     }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
     try {
-      return await fetch(url, init);
+      return await fetch(url, { ...init, signal: controller.signal });
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       throw new EngineUnavailable(`could not reach engine at ${url}: ${message}`, { cause });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -253,23 +394,14 @@ export class RemoteClient {
   }
 }
 
-/** Strips a single trailing slash from the admin URL. */
-function normalizeUrl(url: string): string {
+/** Strips a single trailing slash from the admin URL. Exported for reuse by the engine facade. */
+export function normalizeUrl(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
-/** Connects to a Rift admin API at `url`, returning a client bound to that base URL. */
+/** Connects to a Rift admin API at `url`, returning a client bound to that base URL. This is the
+ * low-level, synchronous escape hatch; `rift.connect` (../engine.js) is the async facade that
+ * wraps this in an `Engine` after a version preflight. */
 export function connect(url: string): RemoteClient {
   return new RemoteClient(normalizeUrl(url));
 }
-
-/**
- * Facade for the remote/spawn transports. `spawn` is attached by ../spawn/spawn.js when that
- * module is loaded (it's optional here so this module has no runtime dependency on it).
- */
-export interface RiftFacade {
-  connect: typeof connect;
-  spawn?: SpawnFn;
-}
-
-export const rift: RiftFacade = { connect };
