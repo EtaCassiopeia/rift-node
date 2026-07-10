@@ -88,7 +88,7 @@ export async function findBinary(): Promise<string> {
   throw new Error(
     `Rift binary not found. Install it via one of:\n` +
       `  1. Run './scripts/install-local.sh' from the Rift repo\n` +
-      `  2. Run 'npm install' again (postinstall will download)\n` +
+      `  2. Run 'npx rift-fetch' to download it on demand\n` +
       `  3. Set RIFT_BINARY_PATH environment variable\n` +
       `  4. Install 'rift' or 'rift-http-proxy' to your system PATH\n\n` +
       `For manual installation, visit: https://github.com/EtaCassiopeia/rift/releases`
