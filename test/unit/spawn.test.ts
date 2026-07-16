@@ -9,6 +9,7 @@
 
 import { jest } from '@jest/globals';
 import { createHash } from 'crypto';
+import path from 'path';
 import {
   resolveBinary,
   binaryDownloadUrl,
@@ -80,18 +81,24 @@ describe('spawn — air-gap detection', () => {
 
 describe('spawn — extracted archive binary candidates', () => {
   it('probes the release layout (rift-<version>-<target>/bin/rift) before legacy layouts', () => {
-    const candidates = extractedBinaryCandidates('/cache/rift-v0.14.0', 'v0.14.0', 'aarch64-apple-darwin');
+    // Build expectations with path.join so the assertions hold on both POSIX and Windows
+    // (separators and the platform binary suffix differ — the production code uses path.join too).
+    const dest = path.join(path.sep, 'cache', 'rift-v0.14.0');
+    const versioned = path.join(dest, 'rift-v0.14.0-aarch64-apple-darwin');
+    const riftName = process.platform === 'win32' ? 'rift.exe' : 'rift';
+    const inBin = path.join(versioned, 'bin', riftName);
+    const inVersioned = path.join(versioned, riftName);
+    const inRoot = path.join(dest, riftName);
+
+    const candidates = extractedBinaryCandidates(dest, 'v0.14.0', 'aarch64-apple-darwin');
     // v0.12.0+ archives nest binaries under bin/, and the engine binary is named `rift`.
-    expect(candidates).toContain('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/bin/rift');
+    expect(candidates).toContain(inBin);
     // Legacy layouts stay probed: directly under the versioned dir, and at the archive root.
-    expect(candidates).toContain('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/rift');
-    expect(candidates).toContain('/cache/rift-v0.14.0/rift');
+    expect(candidates).toContain(inVersioned);
+    expect(candidates).toContain(inRoot);
     // bin/ layout wins over the versioned dir, which wins over the root.
-    const binIdx = candidates.indexOf('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/bin/rift');
-    const nestedIdx = candidates.indexOf('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/rift');
-    const rootIdx = candidates.indexOf('/cache/rift-v0.14.0/rift');
-    expect(binIdx).toBeLessThan(nestedIdx);
-    expect(nestedIdx).toBeLessThan(rootIdx);
+    expect(candidates.indexOf(inBin)).toBeLessThan(candidates.indexOf(inVersioned));
+    expect(candidates.indexOf(inVersioned)).toBeLessThan(candidates.indexOf(inRoot));
   });
 });
 
