@@ -7,6 +7,23 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **TLS-MITM intercept surface** (`@rift-vs/rift`, issue #11): `engine.intercept(options?)` returns
+  an `InterceptHandle` — `serve(match, response)`/`forward(match, to)`/`redirectTo(imposter)` build
+  `wire.InterceptRule`s (host shorthand or AND-ed predicates), plus `addRule`/`rules`/`clearRules`,
+  `caPem`/`caFile`/`exportTruststore`, and `env()` (`HTTPS_PROXY`/`HTTP_PROXY`/`NODE_EXTRA_CA_CERTS`)
+  for pointing a SUT's proxy at Rift. Implemented once over an `InterceptBackend` seam (embedded
+  adapts the issue #8 FFI calls; remote/spawn adapt new `RemoteClient` HTTP routes:
+  `POST/GET/DELETE /intercept/rules`, `GET /intercept/ca.pem`, `GET /intercept/truststore.{p12,jks}`),
+  so the whole handle is unit-testable against a fake backend with no cdylib/koffi/live engine.
+  Per-transport availability is typed and documented: embedded starts via `rift_start_intercept`
+  (idempotent handle reuse; a second call with options throws `InterceptUnavailable`); spawn requires
+  `rift.spawn({ intercept: true | InterceptOptions })` (`--intercept-port` + optional
+  `--intercept-ca-cert`/`--intercept-ca-key`), else `InterceptUnavailable` names the fix; remote
+  attaches by probing `GET /intercept/rules`, surfacing a 404 as `InterceptUnavailable` naming
+  `--intercept-port`. The optional `@rift-vs/rift/intercept-undici` subpath exports
+  `interceptDispatcher(handle)`, dynamically importing the optional peer `undici` to build a
+  `ProxyAgent` wired with the intercept CA — core stays undici-free.
+
 - **`rift.embedded()` in-process transport** (`@rift-vs/rift`): returns the same `RiftEngine` as
   `connect`/`spawn`, backed by the embedded worker binding — no Docker, engine-assigned ports.
   Resolves the cdylib, runs a version + feature preflight (`versionCheck: 'fail'|'warn'|'off'`,
