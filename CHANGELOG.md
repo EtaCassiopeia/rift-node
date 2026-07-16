@@ -7,6 +7,13 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **Verification API** (`@rift-vs/rift`): `imposter.verify(match, times(n))` with WireMock-style
+  near-miss diffs. Typed `RecordedRequest`, `handle.recorded(filter)` / `clearRecorded()`, and count
+  matchers `times`/`atLeast`/`atMost`/`between`/`never` (exported from the package root). A zero-dep
+  client-side predicate evaluator mirrors the engine's matcher semantics (all operators + params, a
+  jsonpath subset); unsupported operators (`xpath`/`inject`/jsonpath wildcards) and operator-less
+  predicates throw `UnsupportedPredicateError` rather than matching silently. `renderVerificationFailure`
+  is a standalone renderer the testkits reuse. `SpaceHandle.recorded()/verify()` scope by flow id.
 - **DSL response completion** (`@rift-vs/rift`): the response side of the fluent DSL now reaches
   every engine feature. New on `ResponseBuilder`: `badRequest()`, multi-value `header(name, string[])`,
   `binaryBody()` (base64 + `_mode: 'binary'`), `templated()`, full `_behaviors`
