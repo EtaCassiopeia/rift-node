@@ -5,6 +5,29 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ## Unreleased
 
+### Added
+
+- **DSL response completion** (`@rift-vs/rift`): the response side of the fluent DSL now reaches
+  every engine feature. New on `ResponseBuilder`: `badRequest()`, multi-value `header(name, string[])`,
+  `binaryBody()` (base64 + `_mode: 'binary'`), `templated()`, full `_behaviors`
+  (`latency(number | {min,max} | fn-string)`, `decorate()`, `shellTransform()`, `copy()`, `lookup()`,
+  `behavior()` escape hatch), and `raw()` for last-wins patches. New `Fault` helper for typed chaos
+  faults (`Fault.latency/error/tcp`, merged via `withFault()`); new `Script` builder
+  (`Script.rhai/js/rhaiFile/jsFile/ref`) wrapped by `script()`; and a full `proxyTo()` `ProxyBuilder`
+  (`proxyOnce/Always/Transparent`, `generatePredicates`, `addWaitBehavior`, `addDecorateBehavior`,
+  `injectHeader`, `rewritePath`, `clientCert`).
+- `willReturn(...)` now **appends** across calls (response cycling), matching the sibling SDKs;
+  `respond(...)` stays an alias.
+
+### Fixed
+
+- **Proxy/inject responses no longer silently drop `_behaviors`/`_rift`.** `proxyTo(url).latency(500)`
+  (and `inject(...).repeat(n)`) now emit their behaviors instead of discarding them. Invalid
+  combinations fail loudly with `InvalidDefinition` rather than dropping data: an `is` body set
+  alongside a proxy/inject/native fault, a `tcp` fault set via both `fault()` and `withFault()`, a
+  case-variant near-miss of a native fault kind, or a script spec that isn't exactly one of
+  code/file/ref.
+
 ### Changed
 
 - **Default engine version is now v0.14.0** (`DEFAULT_ENGINE_VERSION`): the version the spawn

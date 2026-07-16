@@ -105,6 +105,10 @@ export interface ProxyResponse {
   predicateGenerators?: JsonValue[];
   addWaitBehavior?: boolean;
   addDecorateBehavior?: string;
+  injectHeaders?: { [name: string]: string };
+  pathRewrite?: { from: string; to: string };
+  key?: string;
+  cert?: string;
   [key: string]: unknown;
 }
 
@@ -123,7 +127,7 @@ export interface StubResponse {
 }
 
 export interface Behaviors {
-  wait?: number | { inject: string };
+  wait?: number | string | { min: number; max: number };
   repeat?: number;
   decorate?: string;
   shellTransform?: string | string[];

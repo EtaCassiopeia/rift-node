@@ -103,9 +103,9 @@ export class StubBuilder<P = Record<string, never>> {
     return this.when(req.query(name, m));
   }
 
-  /** Sets the response cycle. Multiple responses are cycled by the engine in call order. */
+  /** Appends to the response cycle. Multiple responses are cycled by the engine in call order. */
   willReturn(...responses: ResponseBuilder[]): this {
-    this.responseList = responses.map((r) => r.build());
+    this.responseList.push(...responses.map((r) => r.build()));
     return this;
   }
 
