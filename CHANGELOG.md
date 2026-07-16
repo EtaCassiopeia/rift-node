@@ -7,6 +7,14 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **Embedded transport FFI binding + worker** (`@rift-vs/rift/embedded`, issue #8): a koffi-backed
+  `NativeEngine` facade over `librift_ffi` (C-ABI v2, all 26 symbols), split into a pure,
+  koffi-free `handleCall` discipline (last-error read + decode + free, unit-tested against a fake
+  `NativeBinding`) and a thin `worker_threads` wrapper that runs it. `koffi` is an
+  `optionalDependency`, dynamically imported only when the embedded transport is actually loaded —
+  its (or a cdylib's) absence surfaces as a rejected `NativeEngine.load()`, never at `import`. An
+  ambient `koffi.d.ts` shim keeps `tsc --noEmit` green without koffi installed. Subpath-only
+  (`@rift-vs/rift/embedded`); wiring it into `rift.embedded()` is issue #10.
 - **cdylib (native library) resolution** (`@rift-vs/rift`, issue #9): `resolveCdylib`/`platformClassifier`
   (from `src/natives`, exported at the package root) resolve `librift_ffi` for the future
   `@rift-vs/rift-embedded` transport — explicit override (`RIFT_FFI_LIB`) → sidecar-verified local
