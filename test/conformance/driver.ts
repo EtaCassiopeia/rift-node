@@ -1,0 +1,136 @@
+/**
+ * Conformance replay driver (issue #7).
+ *
+ * Replays a `Fixture`'s interactions against a live engine using ONLY the `fromJson` escape
+ * hatch — the DSL reconstruction axis (`dsl-coverage.ts` / `conformance.test.ts`) is deliberately
+ * kept separate, so a replay failure can never be masked by a DSL builder quietly emitting
+ * different wire than the fixture says.
+ */
+
+import type { RiftEngine } from '../../src/engine.js';
+import { fromJson, type Imposter } from '../../src/model/index.js';
+import type { Fixture, Interaction, InteractionExpectation, InteractionRequest } from './loader.js';
+
+function buildUrl(base: string, request: InteractionRequest): URL {
+  const url = new URL(request.path, base);
+  if (request.query !== undefined) {
+    for (const [key, value] of Object.entries(request.query)) {
+      url.searchParams.set(key, value);
+    }
+  }
+  return url;
+}
+
+function toFetchInit(request: InteractionRequest): RequestInit {
+  const init: RequestInit = { method: request.method };
+  if (request.headers !== undefined) init.headers = request.headers;
+  if (request.body !== undefined) init.body = JSON.stringify(request.body);
+  return init;
+}
+
+function formatDiff(label: string, expected: unknown, actual: unknown): string {
+  return `  ${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`;
+}
+
+/** Case-insensitive header lookup keyed by lowercase header name — HTTP header names are
+ * case-insensitive, so a fixture's `Content-Type` must match a response's `content-type`. */
+function lowerCaseHeaders(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key.toLowerCase()] = value;
+  });
+  return out;
+}
+
+/**
+ * Asserts a single interaction's expectation against the actual response: status EXACT, headers a
+ * SUBSET match (only the fixture's named headers are checked), body EXACT (deep JSON equality) or
+ * `bodyContains` (substring). Collects every mismatch before throwing, so one failure doesn't hide
+ * others in the same step.
+ */
+/** Order-independent structural deep equality for JSON values (objects compared key-set + value). */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => deepEqual(v, b[i]))
+    );
+  }
+  if (typeof a === 'object') {
+    const ao = a as Record<string, unknown>;
+    const bo = b as Record<string, unknown>;
+    const ak = Object.keys(ao);
+    const bk = Object.keys(bo);
+    return ak.length === bk.length && ak.every((k) => k in bo && deepEqual(ao[k], bo[k]));
+  }
+  return false;
+}
+
+async function assertExpectation(
+  fixtureName: string,
+  stepIndex: number,
+  expectation: InteractionExpectation,
+  res: Response
+): Promise<void> {
+  const failures: string[] = [];
+
+  if (res.status !== expectation.status) {
+    failures.push(formatDiff('status', expectation.status, res.status));
+  }
+
+  if (expectation.headers !== undefined) {
+    const actualHeaders = lowerCaseHeaders(res.headers);
+    for (const [name, expected] of Object.entries(expectation.headers)) {
+      const actual = actualHeaders[name.toLowerCase()];
+      if (actual !== expected) failures.push(formatDiff(`header[${name}]`, expected, actual));
+    }
+  }
+
+  const bodyText = await res.text();
+  if (expectation.bodyContains !== undefined) {
+    if (!bodyText.includes(expectation.bodyContains)) {
+      failures.push(formatDiff('body (contains)', expectation.bodyContains, bodyText));
+    }
+  } else if (expectation.body !== undefined) {
+    // The fixture's expected body is JSON; a non-JSON response body is itself a mismatch (compared
+    // against the raw text) rather than a parse error — the failure message should show what came
+    // back, not throw a SyntaxError that hides the real assertion failure.
+    let actualBody: unknown = bodyText;
+    try {
+      actualBody = JSON.parse(bodyText);
+    } catch {
+      // actualBody stays the raw text; the structural comparison below surfaces the mismatch.
+    }
+    // Order-independent structural equality (not JSON.stringify, which is key-order sensitive) so a
+    // differently-ordered but equal response body isn't a false failure — consistent with the pure gate.
+    if (!deepEqual(actualBody, expectation.body)) {
+      failures.push(formatDiff('body', expectation.body, actualBody));
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      `conformance replay failed: fixture "${fixtureName}" step ${stepIndex}\n${failures.join('\n')}`
+    );
+  }
+}
+
+/**
+ * Creates the fixture's imposter, replays every interaction against it in order, and deletes it
+ * (even on failure). Explicit fixture ports are respected verbatim — `fromJson` never rewrites a
+ * `port` field — and an unset port gets an engine-assigned one via `handle.url`.
+ */
+export async function replayFixture(engine: RiftEngine, fixture: Fixture): Promise<void> {
+  const handle = await engine.create(fromJson<Imposter>(fixture.imposterJson));
+  try {
+    for (const [index, step] of fixture.interactions.entries()) {
+      const res = await fetch(buildUrl(handle.url, step.request), toFetchInit(step.request));
+      await assertExpectation(fixture.name, index, step.expect, res);
+    }
+  } finally {
+    await handle.delete();
+  }
+}
+
+export type { Fixture, Interaction, InteractionExpectation, InteractionRequest };
