@@ -43,6 +43,9 @@ export { renderVerificationFailure } from './verify/render.js';
 // Spawn transport + reworked binary resolver.
 export * from './spawn/index.js';
 
+// Native library (cdylib) resolution for the future embedded transport (issue #9).
+export * from './natives/index.js';
+
 // The client API facade (issue #21): `RiftEngine` + handles implemented once over `AdminApi`.
 // `rift.connect`/`rift.spawn`/`rift.embedded` are the async, Engine-returning entry points.
 export { rift, Engine } from './engine.js';

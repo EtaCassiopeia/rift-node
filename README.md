@@ -62,6 +62,25 @@ surface on each: stubs/predicates/responses, response cycling, behaviors, proxy
 record/playback, fault injection, stateful scenarios, spaces/flow-state, request
 verification, and TLS-MITM intercept with CA/trust helpers for Node HTTP clients.
 
+## Native resolution: engine binary + cdylib
+
+The spawn transport resolves the `rift` engine binary, and the embedded transport resolves the
+`librift_ffi` cdylib, the same way: an explicit override, then a local sidecar-verified cache, then
+an on-demand, checksummed download — never a network call when air-gapped. Run `npx rift-fetch`
+(or `rift-fetch --bin` / `rift-fetch --lib`) to resolve either or both ahead of time, e.g. to warm a
+CI cache or prepare an air-gapped install (`--classifier <c>` cross-fetches a cdylib for a platform
+other than the host's). The cdylib's checksum check has no opt-out — a corrupt library is loaded
+in-process (`dlopen`), unlike a corrupt binary, which merely fails to exec.
+
+| Variable | Applies to | Purpose |
+|---|---|---|
+| `RIFT_BINARY_PATH` | engine binary | explicit binary path override; skips PATH/cache/download |
+| `RIFT_FFI_LIB` | cdylib | explicit cdylib path override; skips cache/download, **no checksum** (you own the file) |
+| `RIFT_CACHE_DIR` | cdylib | overrides the cache root (defaults to `XDG_CACHE_HOME`, then `~/.cache`) |
+| `RIFT_DOWNLOAD_URL` / `RIFT_MIRROR_URL` | both | alternate release mirror base |
+| `RIFT_OFFLINE` / `RIFT_SKIP_BINARY_DOWNLOAD` | both | air-gapped mode: never reach the network; resolution throws with manual-install instructions (file name, release URL, and the exact cache path to place it at) if nothing local is found |
+| `RIFT_SKIP_CHECKSUM` | engine binary only | opt out of a missing (not mismatched) checksum sidecar — **not available for the cdylib** |
+
 ## Migrating from Mountebank
 
 The existing drop-in story is preserved: `rift.create({ port, … })` remains available as a
