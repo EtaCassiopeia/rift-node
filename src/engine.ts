@@ -11,7 +11,12 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-import type { Imposter, ImpostersConfig, Predicate, RecordedRequest, Stub } from './model/index.js';
+import type {
+  Imposter,
+  ImpostersConfig,
+  RecordedRequest as WireRecordedRequest,
+  Stub,
+} from './model/index.js';
 import { ImposterBuilder } from './dsl/imposter.js';
 import { StubBuilder } from './dsl/stub.js';
 import { RemoteClient, normalizeUrl, type FlowScopedOptions } from './remote/client.js';
@@ -22,7 +27,18 @@ import {
   ImposterNotFound,
   InterceptUnavailable,
   RiftError,
+  VerificationError,
 } from './errors.js';
+import {
+  atLeast,
+  predicatesOf,
+  toRecordedRequest,
+  type CountMatcher,
+  type RecordedFilter,
+  type RecordedRequest,
+  type RequestMatch,
+} from './verify/index.js';
+import { computeClosest, evalPredicates } from './verify/eval.js';
 
 // --- shared small types ----------------------------------------------------------------------
 
@@ -61,7 +77,7 @@ export interface AdminApi extends AsyncDisposable {
   updateStub(port: number, ref: number | { id: string }, stub: Stub): Promise<void>;
   deleteStub(port: number, ref: number | { id: string }): Promise<void>;
 
-  getSavedRequests(port: number, match?: string[]): Promise<RecordedRequest[]>;
+  getSavedRequests(port: number, match?: string[]): Promise<WireRecordedRequest[]>;
   deleteSavedRequests(port: number, match?: string[]): Promise<void>;
   deleteSavedProxyResponses(port: number): Promise<void>;
 
@@ -107,6 +123,11 @@ export interface SpaceHandle {
   addStub(stub: StubBuilder | Stub): Promise<void>;
   stubs(): Promise<{ space: string; stubs: Stub[] }>;
   delete(): Promise<void>;
+
+  // verification (issue #6), scoped to this flow id via `match=flow_id=<id>`
+  recorded(match?: RequestMatch): Promise<RecordedRequest[]>;
+  verify(match: RequestMatch, count?: CountMatcher): Promise<void>;
+
   scenarios(): Promise<Array<{ name: string; state: string }>>;
   setScenarioState(name: string, state: string): Promise<void>;
   resetScenarios(): Promise<void>;
@@ -127,10 +148,12 @@ export interface ImposterHandle extends AsyncDisposable {
   deleteStub(ref: number | { id: string }): Promise<void>;
   stubs(): Promise<Stub[]>;
 
-  // verification (issue #6 fills these in; for now recorded/verify throw)
-  recorded(filter?: string[]): Promise<RecordedRequest[]>;
+  // verification (issue #6)
+  recorded(filter?: RecordedFilter): Promise<RecordedRequest[]>;
   clearRecorded(): Promise<void>;
-  verify(match: StubBuilder | Predicate | Predicate[], count?: unknown): Promise<void>;
+  /** Throws `VerificationError` when the count isn't satisfied; default `count` is `atLeast(1)`.
+   * Throws `RiftError` (naming `.record()`) if the imposter wasn't created with recording enabled. */
+  verify(match: RequestMatch, count?: CountMatcher): Promise<void>;
 
   // scenarios
   scenarios(flowId?: string): Promise<Array<{ name: string; state: string }>>;
@@ -225,7 +248,9 @@ class SpaceHandleImpl implements SpaceHandle {
   constructor(
     private readonly admin: AdminApi,
     private readonly port: number,
-    readonly flowId: string
+    readonly flowId: string,
+    private readonly imposterLabel: string,
+    private readonly recordingEnabled: boolean
   ) {
     this.state = new FlowStateHandleImpl(admin, port, flowId);
   }
@@ -242,6 +267,17 @@ class SpaceHandleImpl implements SpaceHandle {
     await this.admin.deleteSpace(this.port, this.flowId);
   }
 
+  async recorded(match?: RequestMatch): Promise<RecordedRequest[]> {
+    requireRecording(this.imposterLabel, this.recordingEnabled);
+    return fetchRecorded(this.admin, this.port, { match, flowId: this.flowId });
+  }
+
+  async verify(match: RequestMatch, count: CountMatcher = atLeast(1)): Promise<void> {
+    await runVerify(this.admin, this.port, this.imposterLabel, this.recordingEnabled, match, count, {
+      flowId: this.flowId,
+    });
+  }
+
   async scenarios(): Promise<Array<{ name: string; state: string }>> {
     const result = await this.admin.getScenarios(this.port, { flowId: this.flowId });
     return result.scenarios;
@@ -256,11 +292,68 @@ class SpaceHandleImpl implements SpaceHandle {
   }
 }
 
+/** `imposter "users" (port 55123)` / `imposter (port 55123)` — the shared prefix for verification
+ * messages, matching the design's rendered `VerificationError` header exactly. */
+function imposterLabel(name: string | undefined, port: number): string {
+  return name !== undefined ? `imposter "${name}" (port ${port})` : `imposter (port ${port})`;
+}
+
+/** A non-recording imposter has no journal at all, so `verify()`/`recorded()` both fail loudly
+ * with a `RiftError` naming the `.record()` fix rather than silently reporting an empty result. */
+function requireRecording(label: string, recordingEnabled: boolean): void {
+  if (!recordingEnabled) {
+    throw new RiftError(
+      `${label} was created without recording enabled — add .record() when building the imposter to use verify()/recorded()`
+    );
+  }
+}
+
+/** Fetches recorded requests: `flowId` filters server-side (`match=flow_id=<id>`); `match`
+ * (predicates) is evaluated client-side against the (possibly flow-filtered) fetch. */
+async function fetchRecorded(
+  admin: AdminApi,
+  port: number,
+  filter: { match?: RequestMatch; flowId?: string }
+): Promise<RecordedRequest[]> {
+  const serverMatch = filter.flowId !== undefined ? [`flow_id=${filter.flowId}`] : undefined;
+  const mapped = (await admin.getSavedRequests(port, serverMatch)).map(toRecordedRequest);
+  if (filter.match === undefined) return mapped;
+  const predicates = predicatesOf(filter.match);
+  return mapped.filter((r) => evalPredicates(predicates, r));
+}
+
+/** Shared `verify()` body for both `ImposterHandle` and `SpaceHandle`: resolves once `count` is
+ * satisfied, otherwise throws an enriched `VerificationError` (or, when recording was never
+ * enabled, a plain `RiftError` naming the `.record()` fix — there's no journal to check at all). */
+async function runVerify(
+  admin: AdminApi,
+  port: number,
+  label: string,
+  recordingEnabled: boolean,
+  match: RequestMatch,
+  count: CountMatcher,
+  scope: { flowId?: string }
+): Promise<void> {
+  requireRecording(label, recordingEnabled);
+  const predicates = predicatesOf(match);
+  const recorded = await fetchRecorded(admin, port, scope);
+  const matched = recorded.filter((r) => evalPredicates(predicates, r)).length;
+  if (matched >= count.min && matched <= count.max) return;
+  const closest = matched === 0 ? computeClosest(predicates, recorded) : undefined;
+  throw new VerificationError(`Verification failed for ${label}`, {
+    expected: predicates,
+    count: { matched, total: recorded.length, matcher: count },
+    recorded,
+    closest,
+  });
+}
+
 class ImposterHandleImpl implements ImposterHandle {
   readonly port: number;
   readonly url: string;
   readonly name: string | undefined;
   readonly protocol: 'http' | 'https';
+  private readonly recordingEnabled: boolean;
 
   constructor(
     private readonly admin: AdminApi,
@@ -273,6 +366,7 @@ class ImposterHandleImpl implements ImposterHandle {
     this.port = imp.port;
     this.protocol = normalizeProtocol(imp.protocol);
     this.name = imp.name;
+    this.recordingEnabled = imp.recordRequests === true;
     this.url = `${this.protocol}://${reachableHost(hostHint, imp.host)}:${this.port}`;
   }
 
@@ -297,16 +391,25 @@ class ImposterHandleImpl implements ImposterHandle {
     return imp.stubs ?? [];
   }
 
-  async recorded(_filter?: string[]): Promise<RecordedRequest[]> {
-    throw new RiftError('verification API not yet implemented — see issue #6');
+  async recorded(filter?: RecordedFilter): Promise<RecordedRequest[]> {
+    requireRecording(imposterLabel(this.name, this.port), this.recordingEnabled);
+    return fetchRecorded(this.admin, this.port, { match: filter?.match, flowId: filter?.flowId });
   }
 
   async clearRecorded(): Promise<void> {
     await this.admin.deleteSavedRequests(this.port);
   }
 
-  async verify(_match: StubBuilder | Predicate | Predicate[], _count?: unknown): Promise<void> {
-    throw new RiftError('verification API not yet implemented — see issue #6');
+  async verify(match: RequestMatch, count: CountMatcher = atLeast(1)): Promise<void> {
+    await runVerify(
+      this.admin,
+      this.port,
+      imposterLabel(this.name, this.port),
+      this.recordingEnabled,
+      match,
+      count,
+      {}
+    );
   }
 
   async scenarios(flowId?: string): Promise<Array<{ name: string; state: string }>> {
@@ -328,7 +431,13 @@ class ImposterHandleImpl implements ImposterHandle {
   }
 
   space(flowId: string): SpaceHandle {
-    return new SpaceHandleImpl(this.admin, this.port, flowId);
+    return new SpaceHandleImpl(
+      this.admin,
+      this.port,
+      flowId,
+      imposterLabel(this.name, this.port),
+      this.recordingEnabled
+    );
   }
 
   flowState(flowId: string): FlowStateHandle {

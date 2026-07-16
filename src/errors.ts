@@ -10,6 +10,9 @@
  * historical contract; everything else in the SDK throws one of the classes below.
  */
 
+import type { Predicate } from './model/index.js';
+import type { CountMatcher, RecordedRequest } from './verify/index.js';
+
 /**
  * Base class for every error the SDK throws.
  *
@@ -79,11 +82,33 @@ export class WireValidationError extends RiftError {
   }
 }
 
-/** A `verify(...)` expectation was not satisfied. Detail fields are populated by the verification API (issue #6). */
+/** Detail fields for a `VerificationError` — everything needed to render or programmatically
+ * inspect a `verify(...)` miss without re-running the evaluator. */
+export interface VerificationErrorFields {
+  expected: Predicate[];
+  count: { matched: number; total: number; matcher: CountMatcher };
+  recorded: RecordedRequest[];
+  /** The non-matching request satisfying the highest fraction of leaf predicate clauses (ties →
+   * most recent); `undefined` when nothing was recorded, or when everything recorded matched but
+   * the count was still wrong. */
+  closest?: { request: RecordedRequest; failures: Array<{ predicate: Predicate; actual: unknown }> };
+}
+
+/** A `verify(...)` expectation was not satisfied. `render.ts`'s `renderVerificationFailure` turns
+ * these fields into the multi-line failure report; this class only carries the data. */
 export class VerificationError extends RiftError {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+  readonly expected: Predicate[];
+  readonly count: { matched: number; total: number; matcher: CountMatcher };
+  readonly recorded: RecordedRequest[];
+  readonly closest?: { request: RecordedRequest; failures: Array<{ predicate: Predicate; actual: unknown }> };
+
+  constructor(message: string, fields: VerificationErrorFields) {
+    super(message);
     this.name = 'VerificationError';
+    this.expected = fields.expected;
+    this.count = fields.count;
+    this.recorded = fields.recorded;
+    this.closest = fields.closest;
   }
 }
 

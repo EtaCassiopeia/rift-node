@@ -33,6 +33,13 @@ export * from './dsl/index.js';
 export { connect } from './remote/client.js';
 export type { RemoteClient, RemoteClientOptions, FlowScopedOptions } from './remote/client.js';
 
+// Verification API (issue #6): count matchers + the ergonomic `RecordedRequest` at the root, so
+// the quick-start's `import { times } from '@rift-vs/rift'` works. `wire.RecordedRequest` (the raw
+// wire shape) stays namespaced — this is the mapped, ergonomic shape `recorded()`/`verify()` use.
+export { times, atLeast, atMost, between, never } from './verify/index.js';
+export type { RecordedRequest, RequestMatch, CountMatcher, RecordedFilter } from './verify/index.js';
+export { renderVerificationFailure } from './verify/render.js';
+
 // Spawn transport + reworked binary resolver.
 export * from './spawn/index.js';
 
