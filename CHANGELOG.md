@@ -5,6 +5,26 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ## Unreleased
 
+### Changed
+
+- **Default engine version is now v0.14.0** (`DEFAULT_ENGINE_VERSION`): the version the spawn
+  transport downloads when the caller doesn't pin one. `minEngineVersion` stays at `0.12.0` —
+  the SDK does not depend on any post-0.12 engine behavior.
+
+### Fixed
+
+- **Engine binary download actually works.** Release archives (v0.12.0+) nest their binaries
+  under `rift-<version>-<target>/bin/`, and the engine binary inside is named `rift` — the
+  extractor only probed for `rift-http-proxy` at the archive root or directly under the
+  versioned directory, so every download failed with "archive did not contain the expected
+  binary". Extraction now probes the real layout (preferring `bin/`, falling back to the
+  legacy locations) and caches the binary under its canonical name as before.
+- **`spawn()` no longer aborts the engine at startup.** The spawn transport defaulted `host` to
+  `localhost` and always passed it as `--host` — but the engine parses `--host` into a socket
+  address and rejects hostnames with "invalid socket address syntax" (all engine versions), so
+  every default `spawn()` died at startup. The default is now `127.0.0.1`; an explicit `host`
+  must be an IP literal.
+
 ### Changed (breaking)
 
 - **Root exports are now the typed layer only.** The legacy weak types `Predicate`, `Response`,
@@ -31,6 +51,9 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
   `EngineVersionError`, `NativeLibraryError`, `InterceptUnavailable`.
 - Package `exports` map for the planned subpaths `./testkit/vitest`, `./testkit/jest`, and
   `./intercept-undici` (placeholder modules until their features land).
+- `wire.RecordedRequest` now names the `_mode?: 'binary'` marker the engine (≥ 0.13.6) sets on
+  recorded requests whose non-UTF-8 body it base64-encoded. Additive — absent for text bodies,
+  and unknown fields already round-tripped via the index signature.
 
 ### Removed
 

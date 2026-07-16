@@ -13,6 +13,7 @@ export {
   verifySha256,
   parseSha256Sidecar,
   fetchAndVerifyChecksum,
+  extractedBinaryCandidates,
   DEFAULT_ENGINE_VERSION,
 } from './resolve.js';
 export type { PlatformTarget, DownloadUrlOptions, ResolveBinaryOptions, EnvRecord } from './resolve.js';

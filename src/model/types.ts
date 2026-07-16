@@ -161,6 +161,8 @@ export interface RecordedRequest {
   query?: Record<string, string | string[]>;
   headers?: Record<string, string | string[]>;
   body?: JsonValue;
+  /** `'binary'` when the engine base64-encoded a non-UTF-8 body (engine ≥ 0.13.6); absent for text. */
+  _mode?: 'binary';
   timestamp?: string;
   [key: string]: unknown;
 }

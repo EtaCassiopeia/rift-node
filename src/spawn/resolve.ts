@@ -20,12 +20,11 @@ export type EnvRecord = Record<string, string | undefined>;
 const DEFAULT_DOWNLOAD_BASE = 'https://github.com/EtaCassiopeia/rift/releases/download';
 
 /**
- * Default engine version to resolve when the caller doesn't pin one.
- *
- * Tracks package.json's `minEngineVersion` (kept in sync by hand — importing package.json here
- * would require ESM import-assertion machinery for a single constant).
+ * Default engine version to resolve when the caller doesn't pin one — the latest Rift release
+ * this SDK is tested against. Always ≥ package.json's `minEngineVersion`, which moves
+ * independently (it only rises when the SDK depends on newer engine behavior).
  */
-export const DEFAULT_ENGINE_VERSION = 'v0.12.0';
+export const DEFAULT_ENGINE_VERSION = 'v0.14.0';
 
 /** Binary names to probe, in order of preference, newest/most-specific first. */
 const BINARY_NAMES: readonly string[] =
@@ -169,6 +168,22 @@ function defaultLookupPath(name: string): string | null {
   }
 }
 
+/**
+ * Candidate locations of the engine binary inside an extracted release archive, in preference
+ * order. Release archives (v0.12.0+) nest their binaries under `rift-<version>-<target>/bin/`
+ * (where the engine is named `rift`); earlier layouts placed the binary directly under the
+ * versioned directory or at the archive root.
+ */
+export function extractedBinaryCandidates(
+  destDir: string,
+  version: string,
+  target: string
+): string[] {
+  const nested = path.join(destDir, `rift-${version}-${target}`);
+  const roots = [path.join(nested, 'bin'), nested, destDir];
+  return roots.flatMap((root) => BINARY_NAMES.map((name) => path.join(root, name)));
+}
+
 function extractArchive(archivePath: string, destDir: string, ext: 'tar.gz' | 'zip'): void {
   try {
     if (ext === 'tar.gz') {
@@ -221,10 +236,11 @@ function makeDefaultDownload(
 
     const binaryPath = path.join(destDir, CANONICAL_BINARY_NAME);
     if (!fs.existsSync(binaryPath)) {
-      // Some archives nest the binary under a `rift-<version>-<target>/` directory.
-      const nested = path.join(destDir, `rift-${version}-${target}`, CANONICAL_BINARY_NAME);
-      if (fs.existsSync(nested)) {
-        fs.renameSync(nested, binaryPath);
+      for (const candidate of extractedBinaryCandidates(destDir, version, target)) {
+        if (fs.existsSync(candidate)) {
+          fs.renameSync(candidate, binaryPath);
+          break;
+        }
       }
     }
     if (!fs.existsSync(binaryPath)) {

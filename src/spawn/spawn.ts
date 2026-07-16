@@ -12,7 +12,9 @@ import net from 'net';
 import { RemoteClient } from '../remote/index.js';
 import { resolveBinary, type EnvRecord } from './resolve.js';
 
-const DEFAULT_HOST = 'localhost';
+// Must be an IP literal: the engine parses `--host` into a socket address, so a hostname
+// (e.g. `localhost`) aborts startup with "invalid socket address syntax".
+const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_STARTUP_TIMEOUT_MS = 30000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
 const HEALTH_CHECK_INTERVAL_MS = 100;
@@ -81,6 +83,8 @@ export function buildSpawnArgs(
 export interface SpawnOptions {
   /** Admin port to bind. Defaults to an OS-assigned ephemeral port. */
   port?: number;
+  /** Bind address, passed to the engine's `--host`. Must be an IP literal (the engine rejects
+   * hostnames with "invalid socket address syntax"). Default `127.0.0.1`. */
   host?: string;
   loglevel?: string;
   /** Engine version to resolve when the binary isn't already local. */

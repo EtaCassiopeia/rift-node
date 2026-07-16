@@ -17,6 +17,7 @@ import {
   verifySha256,
   parseSha256Sidecar,
   fetchAndVerifyChecksum,
+  extractedBinaryCandidates,
   buildSpawnArgs,
 } from '../../src/spawn/index.js';
 
@@ -74,6 +75,23 @@ describe('spawn — air-gap detection', () => {
     expect(isAirGapped({ RIFT_OFFLINE: '1' })).toBe(true);
     expect(isAirGapped({ RIFT_SKIP_BINARY_DOWNLOAD: '1' })).toBe(true);
     expect(isAirGapped({})).toBe(false);
+  });
+});
+
+describe('spawn — extracted archive binary candidates', () => {
+  it('probes the release layout (rift-<version>-<target>/bin/rift) before legacy layouts', () => {
+    const candidates = extractedBinaryCandidates('/cache/rift-v0.14.0', 'v0.14.0', 'aarch64-apple-darwin');
+    // v0.12.0+ archives nest binaries under bin/, and the engine binary is named `rift`.
+    expect(candidates).toContain('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/bin/rift');
+    // Legacy layouts stay probed: directly under the versioned dir, and at the archive root.
+    expect(candidates).toContain('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/rift');
+    expect(candidates).toContain('/cache/rift-v0.14.0/rift');
+    // bin/ layout wins over the versioned dir, which wins over the root.
+    const binIdx = candidates.indexOf('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/bin/rift');
+    const nestedIdx = candidates.indexOf('/cache/rift-v0.14.0/rift-v0.14.0-aarch64-apple-darwin/rift');
+    const rootIdx = candidates.indexOf('/cache/rift-v0.14.0/rift');
+    expect(binIdx).toBeLessThan(nestedIdx);
+    expect(nestedIdx).toBeLessThan(rootIdx);
   });
 });
 
