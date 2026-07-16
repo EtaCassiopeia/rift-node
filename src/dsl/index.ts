@@ -4,6 +4,9 @@
  */
 
 export * from './response.js';
+export * from './fault.js';
+export * from './script.js';
+export * from './proxy.js';
 export * from './matcher.js';
 export * from './predicate.js';
 export * from './stub.js';
