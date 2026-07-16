@@ -13,6 +13,7 @@
 
 import { jest } from '@jest/globals';
 import { createHash } from 'crypto';
+import os from 'os';
 import path from 'path';
 import {
   resolveCdylib,
@@ -454,6 +455,101 @@ describe('natives — concurrent-resolution lock', () => {
       })
     ).rejects.toThrow(/network blip/);
     expect(fs.unlock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('natives — win32 cache-dir special-case (issue #13)', () => {
+  const LOCALAPPDATA = '/fake-localappdata';
+  const WIN_FILE = 'librift_ffi-windows-x86_64.dll';
+  const win32X64 = { platform: 'win32', arch: 'x64', isMusl: () => false } as const;
+
+  /** A pre-populated cache hit at `destPath`, so a successful `resolveCdylib` resolution (with no
+   * network call) proves the resolver computed exactly that path — pinning `cacheDirFor`'s choice
+   * of cache root without reaching into its internals. */
+  function cacheHitAt(destPath: string, data: Buffer, file: string) {
+    const files = new Map<string, Buffer>([
+      [destPath, data],
+      [`${destPath}.sha256`, Buffer.from(`${sha256(data)}  ${file}\n`)],
+    ]);
+    return {
+      fileExists: (p: string) => files.has(p),
+      readFile: (p: string) => files.get(p) ?? null,
+    };
+  }
+
+  it('win32 + LOCALAPPDATA set resolves under <LOCALAPPDATA>/rift-node', async () => {
+    const data = Buffer.from('win32-localappdata-bytes');
+    const destPath = path.join(LOCALAPPDATA, 'rift-node', 'ffi', DEFAULT_CDYLIB_VERSION, WIN_FILE);
+    const { fileExists, readFile } = cacheHitAt(destPath, data, WIN_FILE);
+    const fetchManifest = jest.fn();
+
+    const got = await resolveCdylib({
+      ...win32X64,
+      env: { LOCALAPPDATA },
+      fileExists,
+      readFile,
+      fetchManifest: fetchManifest as unknown as (u: string) => Promise<NativeManifest>,
+    });
+
+    expect(got).toBe(destPath);
+    expect(fetchManifest).not.toHaveBeenCalled();
+  });
+
+  it('win32 without LOCALAPPDATA falls back to ~/.cache, same as every other platform', async () => {
+    const data = Buffer.from('win32-no-localappdata-bytes');
+    const destPath = path.join(os.homedir(), '.cache', 'rift-node', 'ffi', DEFAULT_CDYLIB_VERSION, WIN_FILE);
+    const { fileExists, readFile } = cacheHitAt(destPath, data, WIN_FILE);
+
+    const got = await resolveCdylib({ ...win32X64, env: {}, fileExists, readFile });
+
+    expect(got).toBe(destPath);
+  });
+
+  it('non-win32 platforms ignore LOCALAPPDATA even when it is set', async () => {
+    const data = Buffer.from('darwin-ignores-localappdata-bytes');
+    const file = 'librift_ffi-darwin-aarch64.dylib';
+    const destPath = path.join(os.homedir(), '.cache', 'rift-node', 'ffi', DEFAULT_CDYLIB_VERSION, file);
+    const { fileExists, readFile } = cacheHitAt(destPath, data, file);
+
+    const got = await resolveCdylib({
+      platform: 'darwin',
+      arch: 'arm64',
+      env: { LOCALAPPDATA },
+      fileExists,
+      readFile,
+    });
+
+    expect(got).toBe(destPath);
+  });
+
+  it('RIFT_CACHE_DIR beats LOCALAPPDATA on win32', async () => {
+    const data = Buffer.from('rift-cache-dir-wins-bytes');
+    const destPath = path.join('/fake-rift-cache-dir', 'rift-node', 'ffi', DEFAULT_CDYLIB_VERSION, WIN_FILE);
+    const { fileExists, readFile } = cacheHitAt(destPath, data, WIN_FILE);
+
+    const got = await resolveCdylib({
+      ...win32X64,
+      env: { RIFT_CACHE_DIR: '/fake-rift-cache-dir', LOCALAPPDATA },
+      fileExists,
+      readFile,
+    });
+
+    expect(got).toBe(destPath);
+  });
+
+  it('XDG_CACHE_HOME beats LOCALAPPDATA on win32', async () => {
+    const data = Buffer.from('xdg-cache-home-wins-bytes');
+    const destPath = path.join('/fake-xdg-cache-home', 'rift-node', 'ffi', DEFAULT_CDYLIB_VERSION, WIN_FILE);
+    const { fileExists, readFile } = cacheHitAt(destPath, data, WIN_FILE);
+
+    const got = await resolveCdylib({
+      ...win32X64,
+      env: { XDG_CACHE_HOME: '/fake-xdg-cache-home', LOCALAPPDATA },
+      fileExists,
+      readFile,
+    });
+
+    expect(got).toBe(destPath);
   });
 });
 
