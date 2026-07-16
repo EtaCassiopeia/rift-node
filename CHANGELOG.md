@@ -18,9 +18,20 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
   `injectHeader`, `rewritePath`, `clientCert`).
 - `willReturn(...)` now **appends** across calls (response cycling), matching the sibling SDKs;
   `respond(...)` stays an alias.
+- **DSL imposter/stub/scenario completion** (`@rift-vs/rift`): `ImposterBuilder` now reaches every
+  engine field — `https({cert,key,mutualAuth})` (HTTPS/mTLS), `strictBehaviors()`,
+  `defaultForward()`, `serviceName()`/`serviceInfo()`, and the imposter-level `_rift` config
+  (`flowState()`/`flowIdFromHeader()`, `metrics()`, `scriptEngine()`, `registerScript()` — merging
+  across calls). `scenario(builder)` appends its FSM stubs in call order (interleaves with `stub()`).
+  `StubBuilder` gains `id()`, `inSpace()`, and `routePattern()`. Scenario `respond(...)` is now
+  variadic (response cycling within a state).
 
 ### Fixed
 
+- **Scenario steps snapshot at `when()`.** A `when(state, stub)` step now builds the stub
+  immediately, so mutating/reusing the same builder afterward no longer silently rewrites the
+  committed step. `defaultResponse` rejects a proxy/inject/fault (or empty raw) response with
+  `InvalidDefinition` instead of a plain `Error` or a stray empty default.
 - **Proxy/inject responses no longer silently drop `_behaviors`/`_rift`.** `proxyTo(url).latency(500)`
   (and `inject(...).repeat(n)`) now emit their behaviors instead of discarding them. Invalid
   combinations fail loudly with `InvalidDefinition` rather than dropping data: an `is` body set

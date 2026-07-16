@@ -1,0 +1,221 @@
+/**
+ * DSL imposter/stub/scenario completion gate (issue #24)
+ *
+ * Pins the wire JSON for the imposter-level fields the issue adds (HTTPS/mTLS, defaultForward,
+ * strictBehaviors, serviceName/Info, the `_rift` config block), the stub-level fields
+ * (`id`/`space`/`route_pattern`), and the two scenario-builder fixes (snapshot-at-`when`, variadic
+ * `respond`). The full example round-trips through `fromJson(toWireJson(...))`.
+ */
+
+import { fromJson, toWireJson } from '../../src/model/index.js';
+import {
+  imposter,
+  onGet,
+  onPost,
+  ok,
+  okJson,
+  status,
+  script,
+  Script,
+  proxyTo,
+  scenario,
+} from '../../src/dsl/index.js';
+import { InvalidDefinition } from '../../src/errors.js';
+
+describe('DSL #24 — HTTPS / mTLS', () => {
+  it('https({cert,key,mutualAuth}) sets protocol https + inline PEM fields', () => {
+    const imp = imposter('s').https({ cert: 'CERT', key: 'KEY', mutualAuth: true }).build();
+    expect(imp).toMatchObject({
+      protocol: 'https',
+      cert: 'CERT',
+      key: 'KEY',
+      mutualAuth: true,
+    });
+  });
+  it('https() with no args sets only protocol https (engine self-signed)', () => {
+    const imp = imposter('s').https().build();
+    expect(imp.protocol).toBe('https');
+    expect(imp.cert).toBeUndefined();
+    expect(imp.mutualAuth).toBeUndefined();
+  });
+});
+
+describe('DSL #24 — imposter metadata', () => {
+  it('strictBehaviors / defaultForward / serviceName / serviceInfo are top-level', () => {
+    const imp = imposter('s')
+      .strictBehaviors()
+      .defaultForward('https://real.example')
+      .serviceName('payments')
+      .serviceInfo({ team: 'core' })
+      .build();
+    expect(imp).toMatchObject({
+      strictBehaviors: true,
+      defaultForward: 'https://real.example',
+      serviceName: 'payments',
+      serviceInfo: { team: 'core' },
+    });
+  });
+  it('raw(patch) is a last-wins shallow merge', () => {
+    expect(imposter('s').port(1).raw({ port: 4545 }).build().port).toBe(4545);
+  });
+});
+
+describe('DSL #24 — _rift config', () => {
+  it('flowState(cfg) passes through into _rift.flowState (undefined omitted)', () => {
+    const imp = imposter('s')
+      .flowState({ backend: 'redis', ttlSeconds: 600, redis: { url: 'redis://localhost:6379' } })
+      .build();
+    expect(imp._rift?.flowState).toEqual({
+      backend: 'redis',
+      ttlSeconds: 600,
+      redis: { url: 'redis://localhost:6379' },
+    });
+  });
+  it('flowIdFromHeader merges flowIdSource into one _rift.flowState block', () => {
+    const imp = imposter('s')
+      .flowState({ backend: 'redis' })
+      .flowIdFromHeader('X-Flow-Id')
+      .build();
+    expect(imp._rift?.flowState).toEqual({
+      backend: 'redis',
+      flowIdSource: 'header:X-Flow-Id',
+    });
+  });
+  it('metrics(port) → _rift.metrics {enabled,port}; metrics() → {enabled}', () => {
+    expect(imposter('s').metrics(9090).build()._rift?.metrics).toEqual({
+      enabled: true,
+      port: 9090,
+    });
+    expect(imposter('s').metrics().build()._rift?.metrics).toEqual({ enabled: true });
+  });
+  it('scriptEngine(cfg) → _rift.scriptEngine', () => {
+    expect(
+      imposter('s').scriptEngine({ defaultEngine: 'rhai', timeoutMs: 2000 }).build()._rift
+        ?.scriptEngine
+    ).toEqual({ defaultEngine: 'rhai', timeoutMs: 2000 });
+  });
+  it('registerScript(name, spec) → _rift.scripts.{name}', () => {
+    const imp = imposter('s').registerScript('approve', Script.rhaiFile('scripts/approve.rhai')).build();
+    expect(imp._rift?.scripts).toEqual({ approve: { file: 'scripts/approve.rhai' } });
+  });
+  it('multiple flowState() calls merge, preserving earlier keys', () => {
+    const imp = imposter('s')
+      .flowState({ backend: 'redis' })
+      .flowState({ ttlSeconds: 600 })
+      .build();
+    expect(imp._rift?.flowState).toEqual({ backend: 'redis', ttlSeconds: 600 });
+  });
+  it('multiple scriptEngine() calls merge, preserving earlier keys', () => {
+    const imp = imposter('s')
+      .scriptEngine({ defaultEngine: 'rhai' })
+      .scriptEngine({ timeoutMs: 5000 })
+      .build();
+    expect(imp._rift?.scriptEngine).toEqual({ defaultEngine: 'rhai', timeoutMs: 5000 });
+  });
+  it('multiple registerScript() calls accumulate distinct names', () => {
+    const imp = imposter('s')
+      .registerScript('a', Script.ref('x'))
+      .registerScript('b', Script.rhai('1'))
+      .build();
+    expect(imp._rift?.scripts).toEqual({ a: { ref: 'x' }, b: { engine: 'rhai', code: '1' } });
+  });
+});
+
+describe('DSL #24 — defaultResponse error path', () => {
+  it('non-is response (proxy) throws InvalidDefinition (not a plain Error)', () => {
+    expect(() => imposter('s').defaultResponse(proxyTo('http://up'))).toThrow(InvalidDefinition);
+  });
+  it('an is response is accepted', () => {
+    expect(imposter('s').defaultResponse(okJson({ ok: true })).build().defaultResponse).toMatchObject(
+      { statusCode: 200 }
+    );
+  });
+  it('a raw IsResponse object is accepted', () => {
+    expect(imposter('s').defaultResponse({ statusCode: 503 }).build().defaultResponse).toEqual({
+      statusCode: 503,
+    });
+  });
+  it('an empty / non-is raw object throws InvalidDefinition (no stray empty default)', () => {
+    expect(() => imposter('s').defaultResponse({})).toThrow(InvalidDefinition);
+    expect(() =>
+      imposter('s').defaultResponse({ proxy: { to: 'x' } } as unknown as Parameters<
+        ReturnType<typeof imposter>['defaultResponse']
+      >[0])
+    ).toThrow(InvalidDefinition);
+  });
+});
+
+describe('DSL #24 — stub-level fields', () => {
+  it('id / inSpace / routePattern emit id / space / route_pattern', () => {
+    const s = onGet('/x').id('stub-1').inSpace('flow-9').routePattern('/x/:y').build();
+    expect(s).toMatchObject({ id: 'stub-1', space: 'flow-9', route_pattern: '/x/:y' });
+  });
+  it('explicit routePattern() overrides the opener-derived :param pattern', () => {
+    // onGet('/x/:id') auto-derives route_pattern '/x/:id'; the explicit override must win.
+    expect(onGet('/x/:id').routePattern('/custom').build().route_pattern).toBe('/custom');
+    // ...and without an override, the opener-derived pattern survives.
+    expect(onGet('/x/:id').build().route_pattern).toBe('/x/:id');
+  });
+});
+
+describe('DSL #24 — scenario builder', () => {
+  it('imposter.scenario(s) appends the FSM stubs; mixed stub()+scenario() order preserved', () => {
+    const imp = imposter('flow')
+      .stub(onGet('/first').willReturn(ok('1')))
+      .scenario(
+        scenario('login')
+          .startingAt('Started')
+          .when('Started', onPost('/login'))
+          .respond(status(200))
+          .goTo('LoggedIn')
+          .when('LoggedIn', onGet('/me'))
+          .respond(okJson({ me: true }))
+      )
+      .stub(onGet('/last').willReturn(ok('z')))
+      .build();
+    const stubs = imp.stubs ?? [];
+    // first plain stub, then 2 scenario stubs, then last plain stub — order preserved
+    expect(stubs).toHaveLength(4);
+    expect(stubs[0]?.responses?.[0]).toEqual({ is: { statusCode: 200, body: '1' } });
+    expect(stubs[1]).toMatchObject({
+      scenarioName: 'login',
+      required_scenario_state: 'Started',
+      new_scenario_state: 'LoggedIn',
+    });
+    expect(stubs[2]).toMatchObject({ required_scenario_state: 'LoggedIn' });
+    expect(stubs[2]?.new_scenario_state).toBeUndefined(); // terminal
+    expect(stubs[3]?.responses?.[0]).toEqual({ is: { statusCode: 200, body: 'z' } });
+  });
+
+  it('snapshot-at-when: mutating the stub builder after when() does not change the committed step', () => {
+    const sb = onGet('/x');
+    const sc = scenario('s').when('Started', sb).respond(ok('committed'));
+    sb.when({ equals: { path: '/MUTATED' } }); // mutate after when()
+    const stubs = sc.build();
+    // the committed predicate is the original single GET /x, not the post-hoc mutation
+    expect(stubs[0]?.predicates).toEqual([{ equals: { method: 'GET' } }, { equals: { path: '/x' } }]);
+  });
+
+  it('variadic respond(...) cycles multiple responses within a state', () => {
+    const stubs = scenario('s')
+      .when('Started', onGet('/x'))
+      .respond(status(200), status(503))
+      .build();
+    expect(stubs[0]?.responses).toEqual([{ is: { statusCode: 200 } }, { is: { statusCode: 503 } }]);
+  });
+});
+
+describe('DSL #24 — full example round-trips', () => {
+  it('fromJson(toWireJson(build())) deep-equals the built imposter', () => {
+    const imp = imposter('payments')
+      .https({ mutualAuth: true })
+      .record()
+      .flowIdFromHeader('X-Flow-Id')
+      .flowState({ backend: 'redis', redis: { url: 'redis://localhost:6379' }, ttlSeconds: 600 })
+      .scriptEngine({ defaultEngine: 'rhai', timeoutMs: 2000 })
+      .registerScript('approve', Script.rhaiFile('scripts/approve.rhai'))
+      .stub(onPost('/pay').willReturn(script(Script.ref('approve'))))
+      .build();
+    expect(fromJson(toWireJson(imp))).toEqual(imp);
+  });
+});
