@@ -71,6 +71,9 @@ export class StubBuilder<P = Record<string, never>> {
   private readonly predicateList: Predicate[] = [];
   private responseList: StubResponse[] = [];
   private readonly routePatternValue: string | undefined;
+  private routePatternOverride: string | undefined;
+  private idValue: string | undefined;
+  private spaceValue: string | undefined;
 
   constructor(seeds?: Predicate[], routePattern?: string) {
     if (seeds !== undefined) this.predicateList.push(...seeds);
@@ -103,6 +106,24 @@ export class StubBuilder<P = Record<string, never>> {
     return this.when(req.query(name, m));
   }
 
+  /** Sets `Stub.id`. */
+  id(id: string): this {
+    this.idValue = id;
+    return this;
+  }
+
+  /** Sets `Stub.space` (the flow-scoping id). */
+  inSpace(flowId: string): this {
+    this.spaceValue = flowId;
+    return this;
+  }
+
+  /** Explicit `Stub.route_pattern` override, taking precedence over the opener-derived one. */
+  routePattern(pattern: string): this {
+    this.routePatternOverride = pattern;
+    return this;
+  }
+
   /** Appends to the response cycle. Multiple responses are cycled by the engine in call order. */
   willReturn(...responses: ResponseBuilder[]): this {
     this.responseList.push(...responses.map((r) => r.build()));
@@ -118,7 +139,10 @@ export class StubBuilder<P = Record<string, never>> {
     const out: Stub = {};
     if (this.predicateList.length > 0) out.predicates = [...this.predicateList];
     if (this.responseList.length > 0) out.responses = [...this.responseList];
-    if (this.routePatternValue !== undefined) out.route_pattern = this.routePatternValue;
+    const routePattern = this.routePatternOverride ?? this.routePatternValue;
+    if (routePattern !== undefined) out.route_pattern = routePattern;
+    if (this.idValue !== undefined) out.id = this.idValue;
+    if (this.spaceValue !== undefined) out.space = this.spaceValue;
     return out;
   }
 }
