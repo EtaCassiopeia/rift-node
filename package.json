@@ -36,6 +36,7 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:unit": "npm test -- --testPathPattern=test/unit",
     "test:integration": "npm test -- --testPathPattern=test/integration",
+    "test:leaks": "npm test -- --detectOpenHandles",
     "prepublishOnly": "npm run build",
     "lint": "eslint src test --ext .ts",
     "typecheck": "tsc --noEmit"

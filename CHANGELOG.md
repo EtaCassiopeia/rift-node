@@ -7,6 +7,11 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **Recorded-request async iteration** (`@rift-vs/rift`): `handle.requests({ pollIntervalMs, signal, match })`
+  returns an `AsyncIterableIterator<RecordedRequest>` that polls the journal (default 250ms) and yields
+  each newly-recorded request exactly once, de-duplicated via a raw-list cursor that resets on a
+  cleared journal. Completes cleanly on `signal` abort or imposter deletion; requires `.record()` like
+  `verify()`/`recorded()`. Push-based delivery over SSE is future work (rift#461).
 - **Verification API** (`@rift-vs/rift`): `imposter.verify(match, times(n))` with WireMock-style
   near-miss diffs. Typed `RecordedRequest`, `handle.recorded(filter)` / `clearRecorded()`, and count
   matchers `times`/`atLeast`/`atMost`/`between`/`never` (exported from the package root). A zero-dep
