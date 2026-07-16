@@ -7,6 +7,15 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **cdylib (native library) resolution** (`@rift-vs/rift`, issue #9): `resolveCdylib`/`platformClassifier`
+  (from `src/natives`, exported at the package root) resolve `librift_ffi` for the future
+  `@rift-vs/rift-embedded` transport — explicit override (`RIFT_FFI_LIB`) → sidecar-verified local
+  cache → manifest-driven, mandatorily-checksummed download (no skip flag, unlike the engine
+  binary's `RIFT_SKIP_CHECKSUM`), guarded by a concurrent-download lock. Six platform classifiers
+  (linux x86_64 glibc/musl, linux aarch64, darwin x86_64/aarch64, windows x86_64); linux
+  aarch64+musl has no published artifact and fails with a clear gap error. `rift-fetch` gains
+  `--bin`/`--lib`/`--version`/`--classifier` flags to prefetch either artifact (or cross-fetch a
+  foreign classifier for CI cache warming / air-gapped installs).
 - **Recorded-request async iteration** (`@rift-vs/rift`): `handle.requests({ pollIntervalMs, signal, match })`
   returns an `AsyncIterableIterator<RecordedRequest>` that polls the journal (default 250ms) and yields
   each newly-recorded request exactly once, de-duplicated via a raw-list cursor that resets on a
