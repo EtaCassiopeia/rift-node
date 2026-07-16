@@ -29,6 +29,10 @@
     "./intercept-undici": {
       "types": "./dist/intercept-undici.d.ts",
       "import": "./dist/intercept-undici.js"
+    },
+    "./embedded": {
+      "types": "./dist/embedded/index.d.ts",
+      "import": "./dist/embedded/index.js"
     }
   },
   "scripts": {
@@ -42,6 +46,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {},
+  "optionalDependencies": {
+    "koffi": "^2.9.0"
+  },
   "peerDependencies": {
     "@rift-vs/rift-embedded": "*",
     "undici": ">=6",
