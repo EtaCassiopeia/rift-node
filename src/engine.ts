@@ -562,6 +562,13 @@ class ImposterHandleImpl implements ImposterHandle {
 interface EngineOptions {
   hostHint?: string;
   onClose?: () => Promise<void>;
+  /** Overrides `buildInfo()`'s default `admin.config()` round-trip — the embedded transport already
+   * has its parsed `BuildInfo` in hand (from `librift_ffi`'s build-info payload) and never needs a
+   * live plane just to answer this. */
+  buildInfo?: () => Promise<BuildInfo>;
+  /** Overrides `adminUrl()`'s default `adminClient.url` read — the embedded transport has no URL
+   * until its loopback admin plane is started, which this hook does lazily, on first call. */
+  adminUrl?: () => Promise<string>;
 }
 
 export class Engine implements RiftEngine {
@@ -602,15 +609,15 @@ export class Engine implements RiftEngine {
   }
 
   async buildInfo(): Promise<BuildInfo> {
+    if (this.opts.buildInfo !== undefined) return this.opts.buildInfo();
     const cfg = await this.adminClient.config();
     return buildInfoFromConfig(cfg);
   }
 
   async adminUrl(): Promise<string> {
+    if (this.opts.adminUrl !== undefined) return this.opts.adminUrl();
     if (typeof this.adminClient.url === 'string') return this.adminClient.url;
-    throw new EngineUnavailable(
-      'adminUrl() has no wired admin URL on this transport (embedded transport is wired in issue #10)'
-    );
+    throw new EngineUnavailable('adminUrl() has no wired admin URL on this transport');
   }
 
   async intercept(): Promise<never> {
@@ -700,8 +707,10 @@ function isBelowVersion(found: [number, number, number], required: [number, numb
 
 /** Returns a human-readable problem string when the engine version fails the compatibility gate,
  * or `undefined` when it's fine. Distinguishes "couldn't determine" and "unrecognizable" from a
- * genuine downgrade so the caller's fail/warn policy governs every case (never a raw parse throw). */
-function versionIssue(found: string | undefined): string | undefined {
+ * genuine downgrade so the caller's fail/warn policy governs every case (never a raw parse throw).
+ * Exported for reuse by the embedded transport's preflight (`embedded/create.ts`, issue #10), which
+ * runs the identical fail/warn/off gate against the cdylib's reported version instead of `/config`. */
+export function versionIssue(found: string | undefined): string | undefined {
   if (found === undefined) {
     return `could not determine the connected engine version (its /config reported none)`;
   }
@@ -720,7 +729,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')) as {
   minEngineVersion?: string;
 };
-const MIN_ENGINE_VERSION = packageJson.minEngineVersion ?? '0.0.0';
+export const MIN_ENGINE_VERSION = packageJson.minEngineVersion ?? '0.0.0';
 
 // --- entry points: rift.connect / rift.spawn / rift.embedded --------------------------------
 
@@ -765,14 +774,26 @@ async function spawnEngine(opts: SpawnOptions = {}): Promise<Engine> {
   });
 }
 
-async function embeddedEngine(_opts?: Record<string, unknown>): Promise<Engine> {
-  throw new EngineUnavailable('embedded transport is wired in issue #10');
+// Re-exported type-only: the embedded module's own runtime code (worker_threads wiring, the FFI
+// binding, the admin-plane bridge) is never pulled into core by this — `import type` is erased at
+// compile time (isolatedModules), so `embedded/create.ts` is only ever loaded by the dynamic
+// `import()` inside `embeddedEngine` below, at the moment a caller actually invokes `rift.embedded()`.
+export type { EmbeddedOptions } from './embedded/create.js';
+
+async function embeddedEngine(opts?: import('./embedded/create.js').EmbeddedOptions): Promise<Engine> {
+  let createEmbeddedEngine: (typeof import('./embedded/create.js'))['createEmbeddedEngine'];
+  try {
+    ({ createEmbeddedEngine } = await import('./embedded/create.js'));
+  } catch (error) {
+    throw new EngineUnavailable('embedded transport requires the embedded module', { cause: error });
+  }
+  return createEmbeddedEngine(opts);
 }
 
 export const rift: {
   connect(url: string, opts?: ConnectOptions): Promise<Engine>;
   spawn(opts?: SpawnOptions): Promise<Engine>;
-  embedded(opts?: Record<string, unknown>): Promise<Engine>;
+  embedded(opts?: import('./embedded/create.js').EmbeddedOptions): Promise<Engine>;
 } = {
   connect: connectEngine,
   spawn: spawnEngine,
