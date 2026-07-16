@@ -154,6 +154,16 @@ export interface ImposterHandle extends AsyncDisposable {
   /** Throws `VerificationError` when the count isn't satisfied; default `count` is `atLeast(1)`.
    * Throws `RiftError` (naming `.record()`) if the imposter wasn't created with recording enabled. */
   verify(match: RequestMatch, count?: CountMatcher): Promise<void>;
+  /** Polls the recorded-request journal (default every 250ms) and yields each newly-recorded
+   * request exactly once, in journal order. Completes cleanly (no throw) when `opts.signal` aborts
+   * or the imposter is deleted mid-poll; throws `RiftError` (naming `.record()`) up front — before
+   * the first poll — if the imposter wasn't created with recording enabled; any other polling
+   * error propagates. */
+  requests(opts?: {
+    pollIntervalMs?: number;
+    signal?: AbortSignal;
+    match?: RequestMatch;
+  }): AsyncIterableIterator<RecordedRequest>;
 
   // scenarios
   scenarios(flowId?: string): Promise<Array<{ name: string; state: string }>>;
@@ -348,6 +358,72 @@ async function runVerify(
   });
 }
 
+/** A plain function call (rather than a repeated `signal?.aborted` property read) so TS's control
+ * flow analysis never narrows it as constant across an `await` — `AbortSignal.aborted` is
+ * `readonly`, which TS otherwise treats as unable to change within a block. */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+/** `setTimeout`-based sleep that also resolves early when `signal` aborts; the timer is cleared and
+ * the abort listener removed in a `finally` on every exit path, so an aborted `requests()` iterator
+ * never leaves a dangling timer behind. */
+async function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (isAborted(signal)) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    await new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+      onAbort = resolve;
+      signal?.addEventListener('abort', onAbort, { once: true });
+      // An abort that lands between the isAborted() check above and addEventListener would attach
+      // to an already-dispatched signal and never fire — re-check so the sleep resolves at once.
+      if (isAborted(signal)) resolve();
+    });
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** Polls `getSavedRequests` for the RAW (unfiltered) journal — never passing a server-side `match`,
+ * since `cursor` is a plain index into the raw appended array and a server-side filter would shift
+ * it, breaking de-dup. `opts.match` (if given) is applied client-side to each newly-seen slice only;
+ * the cursor still advances over the full raw list even when the filter discards most of it. A
+ * shrunk list (`list.length < cursor`) means the journal was cleared, so the cursor resets to 0
+ * instead of stalling forever. SSE-based push delivery is a future capability-probe upgrade
+ * (rift#461) — this only polls. */
+async function* pollRecordedRequests(
+  admin: AdminApi,
+  port: number,
+  opts: { pollIntervalMs?: number; signal?: AbortSignal; match?: RequestMatch }
+): AsyncGenerator<RecordedRequest> {
+  const pollIntervalMs = opts.pollIntervalMs ?? 250;
+  const predicates = opts.match !== undefined ? predicatesOf(opts.match) : undefined;
+  let cursor = 0;
+  while (!isAborted(opts.signal)) {
+    let list: WireRecordedRequest[];
+    try {
+      list = await admin.getSavedRequests(port);
+    } catch (error) {
+      if (error instanceof ImposterNotFound) return;
+      throw error;
+    }
+    // Length-only clear detection: a journal cleared and refilled to >= the old cursor within a
+    // single poll interval isn't observed as a shrink (those entries are skipped). Unavoidable
+    // without server-side request identity — the SSE push path (rift#461) closes this gap.
+    if (list.length < cursor) cursor = 0;
+    const fresh = list.slice(cursor).map(toRecordedRequest);
+    cursor = list.length;
+    for (const request of fresh) {
+      if (predicates === undefined || evalPredicates(predicates, request)) yield request;
+    }
+    if (isAborted(opts.signal)) return;
+    await abortableSleep(pollIntervalMs, opts.signal);
+  }
+}
+
 class ImposterHandleImpl implements ImposterHandle {
   readonly port: number;
   readonly url: string;
@@ -410,6 +486,13 @@ class ImposterHandleImpl implements ImposterHandle {
       count,
       {}
     );
+  }
+
+  async *requests(
+    opts: { pollIntervalMs?: number; signal?: AbortSignal; match?: RequestMatch } = {}
+  ): AsyncIterableIterator<RecordedRequest> {
+    requireRecording(imposterLabel(this.name, this.port), this.recordingEnabled);
+    yield* pollRecordedRequests(this.admin, this.port, opts);
   }
 
   async scenarios(flowId?: string): Promise<Array<{ name: string; state: string }>> {
