@@ -7,6 +7,16 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **`rift.embedded()` in-process transport** (`@rift-vs/rift`): returns the same `RiftEngine` as
+  `connect`/`spawn`, backed by the embedded worker binding — no Docker, engine-assigned ports.
+  Resolves the cdylib, runs a version + feature preflight (`versionCheck: 'fail'|'warn'|'off'`,
+  `requireFeatures`), and drives an FFI-first `AdminApi`: imposters/stubs/recorded/flow-state/spaces
+  go straight over FFI (so `inject`/scripted stubs work with no `allowInjection` flag), while the few
+  operations lacking an FFI symbol (scenarios, enable/disable, saved-request/proxy-response deletion,
+  logs) lazily start a loopback admin plane (started at most once, key-guarded). Multiple embedded
+  engines per process are independent. The embedded module is dynamically imported, so core stays
+  zero-dep for `connect`/`spawn` users.
+
 - **Embedded transport FFI binding + worker** (`@rift-vs/rift/embedded`, issue #8): a koffi-backed
   `NativeEngine` facade over `librift_ffi` (C-ABI v2, all 26 symbols), split into a pure,
   koffi-free `handleCall` discipline (last-error read + decode + free, unit-tested against a fake

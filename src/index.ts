@@ -59,6 +59,7 @@ export type {
   Transport,
   AdminApi,
   ConnectOptions,
+  EmbeddedOptions,
 } from './engine.js';
 
 // Binary discovery helpers (thin wrappers over the resolver; kept for compatibility).
