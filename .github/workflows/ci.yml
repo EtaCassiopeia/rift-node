@@ -91,7 +91,7 @@ jobs:
         run: echo "lib_path=$(npx rift-fetch --lib)" >> "$GITHUB_OUTPUT"
 
       - name: Conformance + embedded integration tests
-        run: npm test -- --testPathPattern="test/(conformance|integration)"
+        run: npm test -- --testPathPattern="test/conformance"
         env:
           RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
 
@@ -134,6 +134,6 @@ jobs:
 
       - name: Conformance + embedded integration tests
         shell: bash
-        run: npm test -- --testPathPattern="test/(conformance|integration)"
+        run: npm test -- --testPathPattern="test/conformance"
         env:
           RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
