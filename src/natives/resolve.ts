@@ -197,12 +197,23 @@ async function defaultFetchArtifact(url: string): Promise<Buffer> {
 // Cache
 // ---------------------------------------------------------------------------------------------
 
-function cacheRoot(env: EnvRecord): string {
-  return env.RIFT_CACHE_DIR ?? env.XDG_CACHE_HOME ?? path.join(os.homedir(), '.cache');
+/**
+ * `RIFT_CACHE_DIR`/`XDG_CACHE_HOME` always win, on every platform. Only when BOTH are unset does
+ * the platform matter: win32 has no XDG convention, so it defaults to `%LOCALAPPDATA%` (the
+ * per-user, non-roaming cache location Windows tooling conventionally uses) instead of the
+ * POSIX `~/.cache`; a win32 box without `LOCALAPPDATA` set (unusual, but not impossible under e.g.
+ * a stripped CI container) falls back to `~/.cache` same as every other platform. `platform` is
+ * injectable so this is testable without actually running on Windows.
+ */
+function cacheRoot(env: EnvRecord, platform: string = process.platform): string {
+  if (env.RIFT_CACHE_DIR !== undefined) return env.RIFT_CACHE_DIR;
+  if (env.XDG_CACHE_HOME !== undefined) return env.XDG_CACHE_HOME;
+  if (platform === 'win32' && env.LOCALAPPDATA !== undefined) return env.LOCALAPPDATA;
+  return path.join(os.homedir(), '.cache');
 }
 
-function cacheDirFor(env: EnvRecord, version: string): string {
-  return path.join(cacheRoot(env), 'rift-node', 'ffi', version);
+function cacheDirFor(env: EnvRecord, version: string, platform: string = process.platform): string {
+  return path.join(cacheRoot(env, platform), 'rift-node', 'ffi', version);
 }
 
 function defaultReadFile(p: string): Buffer | null {
@@ -368,7 +379,7 @@ export async function resolveCdylib(opts: ResolveCdylibOptions = {}): Promise<st
     env,
     isMusl: opts.isMusl,
   });
-  const dir = cacheDirFor(env, version);
+  const dir = cacheDirFor(env, version, opts.platform);
   const destPath = path.join(dir, file);
   const sidecarPath = `${destPath}.sha256`;
   const cacheLookup = opts.cacheLookup ?? ((d, s) => validateCache(d, s, fileExists, readFile));

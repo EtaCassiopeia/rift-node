@@ -82,6 +82,13 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
   `StubBuilder` gains `id()`, `inSpace()`, and `routePattern()`. Scenario `respond(...)` is now
   variadic (response cycling within a state).
 
+### Changed
+
+- **Native-library cache directory on Windows** now defaults to `%LOCALAPPDATA%/rift-node` (was
+  `~/.cache/rift-node`, which is not meaningful on Windows). `RIFT_CACHE_DIR` and `XDG_CACHE_HOME`
+  still override on every platform; non-Windows behavior is unchanged. The conformance corpus now
+  runs over the embedded transport as well (binary-gated), with an experimental Windows CI lane.
+
 ### Fixed
 
 - **Scenario steps snapshot at `when()`.** A `when(state, stub)` step now builds the stub

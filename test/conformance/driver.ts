@@ -32,6 +32,20 @@ function formatDiff(label: string, expected: unknown, actual: unknown): string {
   return `  ${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`;
 }
 
+/**
+ * Normalizes CRLF to LF (issue #13, Windows lane). The primary body comparison is already
+ * JSON-structural (`deepEqual` over `JSON.parse`d values) and needs no help here — JSON.parse
+ * resolves any escaped line endings inside a string value the same way regardless of the
+ * surrounding transport. The two paths that ARE raw string comparisons — `bodyContains`'s
+ * substring check, and the "response body isn't JSON" fallback that compares raw text — are the
+ * ones a CRLF-vs-LF mismatch (e.g. a fixture authored with LF replayed against a Windows-built
+ * engine emitting CRLF, or vice versa) could false-fail, so both sides are normalized before
+ * comparing.
+ */
+function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n/g, '\n');
+}
+
 /** Case-insensitive header lookup keyed by lowercase header name — HTTP header names are
  * case-insensitive, so a fixture's `Content-Type` must match a response's `content-type`. */
 function lowerCaseHeaders(headers: Headers): Record<string, string> {
@@ -87,9 +101,9 @@ async function assertExpectation(
     }
   }
 
-  const bodyText = await res.text();
+  const bodyText = normalizeLineEndings(await res.text());
   if (expectation.bodyContains !== undefined) {
-    if (!bodyText.includes(expectation.bodyContains)) {
+    if (!bodyText.includes(normalizeLineEndings(expectation.bodyContains))) {
       failures.push(formatDiff('body (contains)', expectation.bodyContains, bodyText));
     }
   } else if (expectation.body !== undefined) {
@@ -102,9 +116,13 @@ async function assertExpectation(
     } catch {
       // actualBody stays the raw text; the structural comparison below surfaces the mismatch.
     }
+    // A string expectation only arises from the same "non-JSON body" fallback (a JSON-typed
+    // expectation.body, e.g. an array/object/number, can never CRLF-mismatch — JSON.parse already
+    // normalized it); normalize it too so the raw-text comparison is CRLF-insensitive on both sides.
+    const expectedBody = typeof expectation.body === 'string' ? normalizeLineEndings(expectation.body) : expectation.body;
     // Order-independent structural equality (not JSON.stringify, which is key-order sensitive) so a
     // differently-ordered but equal response body isn't a false failure — consistent with the pure gate.
-    if (!deepEqual(actualBody, expectation.body)) {
+    if (!deepEqual(actualBody, expectedBody)) {
       failures.push(formatDiff('body', expectation.body, actualBody));
     }
   }

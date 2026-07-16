@@ -46,3 +46,100 @@ jobs:
 
       - name: Test
         run: npm test
+
+  embedded-conformance:
+    name: embedded conformance (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Allowed-failure/tracking for now: once the cdylib fetch succeeds the embedded replay lane
+    # actually runs, but exercising the worker_threads worker from TS source under jest can't resolve
+    # the built worker (`src/embedded/worker.js` only exists as `dist/...` after build) — the harness
+    # needs to run against the built package. Tracked as a follow-up; the transport itself works from
+    # the published dist. Non-blocking until that lands, same discipline as the experimental windows lane.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      # Workspace-relative so `actions/cache` can key on a plain path on every OS, rather than
+      # depending on each platform's own cache-dir default (`~/.cache` / `%LOCALAPPDATA%`) resolving
+      # predictably inside the runner.
+      RIFT_CACHE_DIR: ${{ github.workspace }}/.rift-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Cache librift_ffi cdylib
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.RIFT_CACHE_DIR }}
+          key: rift-ffi-${{ matrix.os }}-${{ hashFiles('package.json') }}
+
+      # Best-effort: no `sdk-conformance-<version>` corpus or published cdylib release exists yet
+      # (rift#460 / this issue's prerequisite), so this 404s today — `continue-on-error` lets the
+      # job finish green with `RIFT_FFI_LIB` unset, at which point the embedded conformance lane
+      # (test/conformance/replay.integration.test.ts's `describeEmbeddedOrSkip`) self-skips, same
+      # as it does locally without koffi. Once the cdylib ships, this step starts succeeding and
+      # the lane starts actually running, with no further CI change needed.
+      - name: Fetch librift_ffi cdylib
+        id: fetch-lib
+        continue-on-error: true
+        run: echo "lib_path=$(npx rift-fetch --lib)" >> "$GITHUB_OUTPUT"
+
+      - name: Conformance + embedded integration tests
+        run: npm test -- --testPathPattern="test/conformance"
+        env:
+          RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
+
+  embedded-conformance-windows:
+    # Experimental: Windows support for the embedded transport (koffi + the cdylib loader) is
+    # unvalidated — this job tracks it without gating merges on it (`continue-on-error: true`), and
+    # is named with the `experimental` label so it's obvious at a glance in the checks list.
+    name: embedded conformance (windows-latest, experimental)
+    runs-on: windows-latest
+    continue-on-error: true
+    env:
+      RIFT_CACHE_DIR: ${{ github.workspace }}/.rift-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Cache librift_ffi cdylib
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.RIFT_CACHE_DIR }}
+          key: rift-ffi-windows-latest-${{ hashFiles('package.json') }}
+
+      # Same best-effort/self-skip reasoning as the ubuntu/macos job above; `shell: bash` so the
+      # `$(...)`/`>>` output-capture syntax is portable to the Windows runner.
+      - name: Fetch librift_ffi cdylib
+        id: fetch-lib
+        continue-on-error: true
+        shell: bash
+        run: echo "lib_path=$(npx rift-fetch --lib)" >> "$GITHUB_OUTPUT"
+
+      - name: Conformance + embedded integration tests
+        shell: bash
+        run: npm test -- --testPathPattern="test/conformance"
+        env:
+          RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
