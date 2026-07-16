@@ -60,6 +60,8 @@ export type {
   AdminApi,
   ConnectOptions,
   EmbeddedOptions,
+  InterceptHandle,
+  InterceptOptions,
 } from './engine.js';
 
 // Binary discovery helpers (thin wrappers over the resolver; kept for compatibility).

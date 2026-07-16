@@ -13,6 +13,7 @@
 import { Engine, versionIssue, MIN_ENGINE_VERSION, type BuildInfo } from '../engine.js';
 import { EngineVersionError, NativeLibraryError } from '../errors.js';
 import { resolveCdylib } from '../natives/index.js';
+import { EmbeddedInterceptBackend } from '../intercept/embedded-backend.js';
 import { NativeEngine } from './native.js';
 import { EmbeddedAdmin, type NativeEngineLike, type StartAdminPlane } from './admin.js';
 
@@ -123,5 +124,6 @@ export async function createEmbeddedEngine(
   return new Engine(admin, 'embedded', {
     buildInfo: async () => admin.buildInfo,
     adminUrl: () => admin.adminUrl(),
+    interceptBackend: new EmbeddedInterceptBackend(native),
   });
 }

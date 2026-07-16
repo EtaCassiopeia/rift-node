@@ -170,3 +170,16 @@ export interface RecordedRequest {
   timestamp?: string;
   [key: string]: unknown;
 }
+
+/**
+ * A TLS-MITM intercept rule (issue #11): `host` (exact match) or `predicates` (standard predicates
+ * over the decrypted request, AND-ed) select which requests `action` applies to. `serve` returns a
+ * canned response; `forward` re-proxies (in plaintext) to an imposter listening on `action.forward.port`.
+ * A rule with neither `host` nor `predicates` is a catch-all (see `InterceptHandle.redirectTo`).
+ */
+export interface InterceptRule {
+  host?: string;
+  predicates?: Predicate[];
+  action: { serve: IsResponse } | { forward: { port: number } };
+  [key: string]: unknown;
+}

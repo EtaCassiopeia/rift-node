@@ -10,6 +10,8 @@
 import { type ChildProcess, spawn as spawnProcess } from 'child_process';
 import net from 'net';
 import { RemoteClient } from '../remote/index.js';
+import { InvalidDefinition } from '../errors.js';
+import type { InterceptOptions } from '../intercept/types.js';
 import { resolveBinary, type EnvRecord } from './resolve.js';
 
 // Must be an IP literal: the engine parses `--host` into a socket address, so a hostname
@@ -34,7 +36,7 @@ export function buildSpawnArgs(
     configfile?: string;
     defaultTls?: { cert: string; key: string };
     metricsPort?: number;
-    intercept?: boolean | { port?: number };
+    intercept?: boolean | InterceptOptions;
   } = {}
 ): string[] {
   const args = ['--port', String(port)];
@@ -76,6 +78,16 @@ export function buildSpawnArgs(
   } else if (typeof opts.intercept === 'object' && opts.intercept !== null) {
     // Any options object enables intercept; an unspecified port means "pick an ephemeral one" (0).
     args.push('--intercept-port', String(opts.intercept.port ?? 0));
+    const { caCertPath, caKeyPath } = opts.intercept;
+    // Both-or-neither: a lone CA path would otherwise be silently dropped and the engine would mint
+    // its own CA, ignoring the caller's — a wrong-but-quiet failure on a TLS-MITM surface. Reject it
+    // loudly, mirroring validateInterceptOptions on the intercept() path.
+    if ((caCertPath === undefined) !== (caKeyPath === undefined)) {
+      throw new InvalidDefinition('intercept CA requires both caCertPath and caKeyPath, or neither');
+    }
+    if (caCertPath !== undefined && caKeyPath !== undefined) {
+      args.push('--intercept-ca-cert', caCertPath, '--intercept-ca-key', caKeyPath);
+    }
   }
   return args;
 }
@@ -113,14 +125,21 @@ export interface SpawnOptions {
   defaultTls?: { cert: string; key: string };
   /** --metrics-port */
   metricsPort?: number;
-  /** --intercept-port (+ CA paths, once wired — issue #11). `true` picks an ephemeral port. */
-  intercept?: boolean | { port?: number };
+  /** --intercept-port (+ CA paths). `true` requests an ephemeral port; `spawn()` pre-resolves it via
+   * the same free-port allocator the admin port uses (see `resolveInterceptPort`), so
+   * `SpawnedEngine.interceptPort` — and therefore `engine.intercept()`'s attach — always has a
+   * concrete number. `buildSpawnArgs` itself still emits the engine-ephemeral literal `--intercept-port
+   * 0` when called directly with no port (e.g. its own unit tests). */
+  intercept?: boolean | InterceptOptions;
 }
 
 export interface SpawnedEngine {
   /** Base admin URL, e.g. `http://localhost:54321`. */
   readonly url: string;
   readonly port: number;
+  /** The intercept listener's port, pre-resolved by `spawn()` — set only when `opts.intercept` was
+   * truthy. */
+  readonly interceptPort?: number;
   readonly client: RemoteClient;
   /** Gracefully stops the engine (SIGTERM, then SIGKILL after the shutdown timeout). */
   close(): Promise<void>;
@@ -152,6 +171,16 @@ async function findFreePort(): Promise<number> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Pre-resolves the intercept listener's port the same way the admin port is resolved above: an
+ * explicit `intercept.port` wins, otherwise a free ephemeral port is allocated up front. This means
+ * the SDK always knows the concrete intercept port before the child process even starts — no
+ * after-the-fact discovery is needed for `engine.intercept()`'s spawn-transport attach. */
+async function resolveInterceptPort(intercept: SpawnOptions['intercept']): Promise<number | undefined> {
+  if (intercept === undefined || intercept === false) return undefined;
+  if (intercept === true) return findFreePort();
+  return intercept.port ?? findFreePort();
 }
 
 /** Polls the admin root endpoint until it responds (any response, including non-2xx, counts). */
@@ -205,6 +234,11 @@ export async function spawn(opts: SpawnOptions = {}): Promise<SpawnedEngine> {
   });
 
   const port = opts.port ?? (await findFreePort());
+  const interceptPort = await resolveInterceptPort(opts.intercept);
+  const intercept: SpawnOptions['intercept'] =
+    interceptPort === undefined
+      ? opts.intercept
+      : { ...(typeof opts.intercept === 'object' ? opts.intercept : {}), port: interceptPort };
   const args = buildSpawnArgs(port, {
     host,
     loglevel: opts.loglevel,
@@ -217,7 +251,7 @@ export async function spawn(opts: SpawnOptions = {}): Promise<SpawnedEngine> {
     configfile: opts.configfile,
     defaultTls: opts.defaultTls,
     metricsPort: opts.metricsPort,
-    intercept: opts.intercept,
+    intercept,
   });
 
   const proc = spawnProcess(binaryPath, args, {
@@ -261,6 +295,7 @@ export async function spawn(opts: SpawnOptions = {}): Promise<SpawnedEngine> {
   return {
     url,
     port,
+    ...(interceptPort !== undefined ? { interceptPort } : {}),
     client: new RemoteClient(url, opts.apiKey !== undefined ? { apiKey: opts.apiKey } : {}),
     close,
     async [Symbol.asyncDispose](): Promise<void> {

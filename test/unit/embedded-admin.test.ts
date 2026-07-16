@@ -136,6 +136,46 @@ class FakeNativeEngine implements NativeEngineLike {
     return JSON.stringify(this.spaceRecordedByPort.get(`${port}/${flowId}`) ?? []);
   }
 
+  interceptRules: unknown[] = [];
+  interceptStartResult: Record<string, unknown> = {
+    interceptPort: 6699,
+    interceptUrl: 'http://127.0.0.1:6699',
+  };
+
+  async startIntercept(optionsJson: string): Promise<Record<string, unknown>> {
+    this.calls.push({ fn: 'startIntercept', args: [optionsJson] });
+    return this.interceptStartResult;
+  }
+
+  async interceptAddRules(json: string): Promise<number> {
+    this.calls.push({ fn: 'interceptAddRules', args: [json] });
+    const rules = JSON.parse(json) as unknown[];
+    this.interceptRules.push(...rules);
+    return rules.length;
+  }
+
+  async interceptClearRules(): Promise<number> {
+    this.calls.push({ fn: 'interceptClearRules', args: [] });
+    const n = this.interceptRules.length;
+    this.interceptRules = [];
+    return n;
+  }
+
+  async interceptListRules(): Promise<string> {
+    this.calls.push({ fn: 'interceptListRules', args: [] });
+    return JSON.stringify(this.interceptRules);
+  }
+
+  async interceptCaPem(): Promise<string> {
+    this.calls.push({ fn: 'interceptCaPem', args: [] });
+    return '-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----\n';
+  }
+
+  async interceptExportTruststore(format: string, password: string, outPath: string): Promise<number> {
+    this.calls.push({ fn: 'interceptExportTruststore', args: [format, password, outPath] });
+    return 0;
+  }
+
   async serveAdmin(optionsJson: string): Promise<Record<string, unknown>> {
     this.calls.push({ fn: 'serveAdmin', args: [optionsJson] });
     return this.serveAdminResult;

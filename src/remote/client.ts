@@ -6,6 +6,7 @@
  * private `request`/`rawFetch` helpers so the mapping table lives in exactly one place.
  */
 
+import { writeFile } from 'fs/promises';
 import type { Imposter, ImpostersConfig, RecordedRequest, Stub } from '../model/index.js';
 import {
   CommunicationError,
@@ -253,6 +254,45 @@ export class RemoteClient implements AdminApi {
 
   async reload(): Promise<unknown> {
     return this.request<unknown>('/admin/reload', { method: 'POST', allowEmpty: true });
+  }
+
+  // --- intercept (issue #11; attach-only — the engine must be started with --intercept-port) ---
+
+  /** Posts the rules as-is (already-JSON) — bare array in, bare array out, symmetric with
+   * {@link interceptListRules}. */
+  async interceptAddRules(rulesJson: string): Promise<void> {
+    const rules = JSON.parse(rulesJson) as unknown;
+    await this.request('/intercept/rules', { method: 'POST', body: rules, allowEmpty: true });
+  }
+
+  /** A 404 here (no `--intercept-port` on the connected engine) surfaces as `ImposterNotFound` via
+   * the generic 404 mapping below — `engine.ts`'s per-transport dispatch re-maps that into the
+   * documented `InterceptUnavailable` guidance string; this client stays a plain HTTP mapper. */
+  async interceptListRules(): Promise<string> {
+    const rules = await this.request<unknown>('/intercept/rules', { method: 'GET' });
+    return JSON.stringify(rules);
+  }
+
+  async interceptClearRules(): Promise<void> {
+    await this.request('/intercept/rules', { method: 'DELETE', allowEmpty: true });
+  }
+
+  async interceptCaPem(): Promise<string> {
+    const response = await this.rawFetch(`${this.url}/intercept/ca.pem`, { method: 'GET' });
+    if (!response.ok) return this.throwForStatus(response);
+    return response.text();
+  }
+
+  /** `format` is the route's file extension (`p12`/`jks` — the intercept backend maps the public
+   * `'pkcs12'|'jks'` option to it). Writes the fetched bytes straight to `outPath`. */
+  async interceptExportTruststore(format: string, password: string, outPath: string): Promise<void> {
+    const qs = new URLSearchParams({ password }).toString();
+    const response = await this.rawFetch(`${this.url}/intercept/truststore.${format}?${qs}`, {
+      method: 'GET',
+    });
+    if (!response.ok) return this.throwForStatus(response);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    await writeFile(outPath, bytes);
   }
 
   // --- disposal ---

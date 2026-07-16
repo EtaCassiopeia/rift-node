@@ -7,18 +7,25 @@
  * bare client with no shared ergonomic surface.
  */
 
+import { randomUUID } from 'crypto';
+import { writeFile } from 'fs/promises';
 import { readFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 import type {
   Imposter,
   ImpostersConfig,
+  InterceptRule,
+  IsResponse,
+  Predicate,
   RecordedRequest as WireRecordedRequest,
   Stub,
 } from './model/index.js';
 import { ImposterBuilder } from './dsl/imposter.js';
 import { StubBuilder } from './dsl/stub.js';
+import type { ResponseBuilder } from './dsl/response.js';
 import { RemoteClient, normalizeUrl, type FlowScopedOptions } from './remote/client.js';
 import { spawn as spawnProcess, type SpawnOptions } from './spawn/spawn.js';
 import {
@@ -26,6 +33,7 @@ import {
   EngineVersionError,
   ImposterNotFound,
   InterceptUnavailable,
+  InvalidDefinition,
   RiftError,
   VerificationError,
 } from './errors.js';
@@ -39,6 +47,9 @@ import {
   type RequestMatch,
 } from './verify/index.js';
 import { computeClosest, evalPredicates } from './verify/eval.js';
+import type { InterceptBackend, InterceptOptions } from './intercept/types.js';
+import { RemoteInterceptBackend } from './intercept/remote-backend.js';
+import { forwardRule, redirectRule, serveRule } from './intercept/rules.js';
 
 // --- shared small types ----------------------------------------------------------------------
 
@@ -182,6 +193,37 @@ export interface ImposterHandle extends AsyncDisposable {
   delete(): Promise<void>;
 }
 
+export type { InterceptOptions } from './intercept/types.js';
+
+/** TLS-MITM intercept surface (issue #11): point the SUT's HTTPS(+HTTP) proxy at `.url`, decrypt via
+ * a minted (or supplied) CA, and match/serve/forward the decrypted requests. */
+export interface InterceptHandle {
+  /** `"http://127.0.0.1:<port>"` — set as the SUT's HTTPS(+HTTP) proxy. */
+  readonly url: string;
+  readonly port: number;
+
+  /** `string` match = host shorthand (`{host, action:{serve}}`); a `Predicate[]` match is AND-ed
+   * over the decrypted request (`{predicates, action:{serve}}`). */
+  serve(match: string | Predicate[], response: ResponseBuilder | IsResponse): Promise<void>;
+  /** `to` is either a real imposter (its `.port` is used) or a raw port number. */
+  forward(match: string | Predicate[], to: ImposterHandle | number): Promise<void>;
+  /** A catch-all forward rule — no `host`/`predicates` — routing whatever no more specific rule did. */
+  redirectTo(imposter: ImposterHandle): Promise<void>;
+  /** Raw escape hatch: add one or more rules verbatim. */
+  addRule(rule: InterceptRule | InterceptRule[]): Promise<void>;
+  rules(): Promise<InterceptRule[]>;
+  clearRules(): Promise<void>;
+
+  caPem(): Promise<string>;
+  /** Writes the CA PEM to `dir` (default `os.tmpdir()`) under a fresh filename and returns the path. */
+  caFile(dir?: string): Promise<string>;
+  /** `password` defaults to `'changeit'` (the conventional Java truststore default). */
+  exportTruststore(opts: { format: 'pkcs12' | 'jks'; path: string; password?: string }): Promise<void>;
+  /** `{ HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS }` — spread into a child process's env so
+   * Node ≥ 20 (and most HTTP clients that honor these) trust and route through the intercept. */
+  env(): Promise<Record<string, string>>;
+}
+
 export interface RiftEngine extends AsyncDisposable {
   readonly transport: Transport;
 
@@ -194,7 +236,7 @@ export interface RiftEngine extends AsyncDisposable {
   buildInfo(): Promise<BuildInfo>;
   adminUrl(): Promise<string>;
 
-  intercept(options?: unknown): Promise<never>;
+  intercept(options?: InterceptOptions): Promise<InterceptHandle>;
 
   readonly admin: AdminApi;
   close(): Promise<void>;
@@ -559,6 +601,89 @@ class ImposterHandleImpl implements ImposterHandle {
   }
 }
 
+const DEFAULT_TRUSTSTORE_PASSWORD = 'changeit';
+
+/** Implemented exactly once over an {@link InterceptBackend} — embedded (FFI), spawn, and remote
+ * (both HTTP) each only have to produce one, so this class never branches on transport. */
+class InterceptHandleImpl implements InterceptHandle {
+  readonly port: number;
+  readonly url: string;
+
+  constructor(
+    private readonly backend: InterceptBackend,
+    info: { port: number; url: string }
+  ) {
+    this.port = info.port;
+    this.url = info.url;
+  }
+
+  async serve(match: string | Predicate[], response: ResponseBuilder | IsResponse): Promise<void> {
+    await this.addRule(serveRule(match, response));
+  }
+
+  async forward(match: string | Predicate[], to: ImposterHandle | number): Promise<void> {
+    await this.addRule(forwardRule(match, to));
+  }
+
+  async redirectTo(imposter: ImposterHandle): Promise<void> {
+    await this.addRule(redirectRule(imposter));
+  }
+
+  async addRule(rule: InterceptRule | InterceptRule[]): Promise<void> {
+    const rules = Array.isArray(rule) ? rule : [rule];
+    await this.backend.addRules(JSON.stringify(rules));
+  }
+
+  async rules(): Promise<InterceptRule[]> {
+    return JSON.parse(await this.backend.listRules()) as InterceptRule[];
+  }
+
+  async clearRules(): Promise<void> {
+    await this.backend.clearRules();
+  }
+
+  async caPem(): Promise<string> {
+    return this.backend.caPem();
+  }
+
+  async caFile(dir?: string): Promise<string> {
+    const pem = await this.caPem();
+    const target = join(dir ?? tmpdir(), `rift-intercept-ca-${randomUUID()}.pem`);
+    await writeFile(target, pem, 'utf8');
+    return target;
+  }
+
+  async exportTruststore(opts: { format: 'pkcs12' | 'jks'; path: string; password?: string }): Promise<void> {
+    await this.backend.exportTruststore(opts.format, opts.password ?? DEFAULT_TRUSTSTORE_PASSWORD, opts.path);
+  }
+
+  async env(): Promise<Record<string, string>> {
+    const caFile = await this.caFile();
+    return { HTTPS_PROXY: this.url, HTTP_PROXY: this.url, NODE_EXTRA_CA_CERTS: caFile };
+  }
+}
+
+/** Both-or-neither: a lone `caCertPath`/`caKeyPath` is almost certainly a typo (the other half
+ * silently falls back to a generated CA), so it's rejected loudly rather than guessed at. */
+function validateInterceptOptions(options: InterceptOptions | undefined): void {
+  if (options === undefined) return;
+  const hasCert = options.caCertPath !== undefined;
+  const hasKey = options.caKeyPath !== undefined;
+  if (hasCert !== hasKey) {
+    throw new InvalidDefinition('intercept caCertPath and caKeyPath must be provided together (both or neither)');
+  }
+}
+
+/** Shared by every transport's "first call" path: asks the backend to start/attach, then wraps the
+ * result in the one `InterceptHandleImpl`. */
+async function startInterceptWithBackend(
+  backend: InterceptBackend,
+  options: InterceptOptions | undefined
+): Promise<InterceptHandle> {
+  const { interceptPort, interceptUrl } = await backend.startIntercept(JSON.stringify(options ?? {}));
+  return new InterceptHandleImpl(backend, { port: interceptPort, url: interceptUrl });
+}
+
 interface EngineOptions {
   hostHint?: string;
   onClose?: () => Promise<void>;
@@ -569,10 +694,19 @@ interface EngineOptions {
   /** Overrides `adminUrl()`'s default `adminClient.url` read — the embedded transport has no URL
    * until its loopback admin plane is started, which this hook does lazily, on first call. */
   adminUrl?: () => Promise<string>;
+  /** Embedded transport's intercept backend, wired eagerly by `embedded/create.ts` (which already
+   * has the native engine in scope). Absent for remote/spawn, which build a `RemoteInterceptBackend`
+   * lazily inside `Engine.intercept()` itself — there's no eager native handle to adapt there. */
+  interceptBackend?: InterceptBackend;
+  /** Spawn transport's pre-resolved intercept attach point — set only when `rift.spawn({intercept})`
+   * requested it. The port is always concrete by the time this is set (`spawn.ts`'s
+   * `resolveInterceptPort`), never the engine-ephemeral `0` the CLI flag itself may carry. */
+  interceptSpawn?: { host: string; port: number };
 }
 
 export class Engine implements RiftEngine {
   #closed = false;
+  #interceptHandle: InterceptHandle | undefined;
 
   constructor(
     private readonly adminClient: AdminApi,
@@ -620,8 +754,86 @@ export class Engine implements RiftEngine {
     throw new EngineUnavailable('adminUrl() has no wired admin URL on this transport');
   }
 
-  async intercept(): Promise<never> {
-    throw new InterceptUnavailable('intercept() is wired in issue #11');
+  /** Idempotent-ish: the handle is memoized after the first successful call. A later call WITH
+   * options on top of an already-started intercept is rejected (options would be silently ignored
+   * otherwise); a later call with no options just returns the existing handle. */
+  async intercept(options?: InterceptOptions): Promise<InterceptHandle> {
+    if (this.#interceptHandle !== undefined) {
+      if (options !== undefined) {
+        throw new InterceptUnavailable('intercept already started');
+      }
+      return this.#interceptHandle;
+    }
+    validateInterceptOptions(options);
+    const handle = await this.#startIntercept(options);
+    this.#interceptHandle = handle;
+    return handle;
+  }
+
+  async #startIntercept(options: InterceptOptions | undefined): Promise<InterceptHandle> {
+    if (this.transport === 'embedded') return this.#startEmbeddedIntercept(options);
+    if (this.transport === 'spawn') return this.#startSpawnIntercept(options);
+    return this.#startRemoteIntercept(options);
+  }
+
+  async #startEmbeddedIntercept(options: InterceptOptions | undefined): Promise<InterceptHandle> {
+    const backend = this.opts.interceptBackend;
+    if (backend === undefined) {
+      throw new InterceptUnavailable('embedded transport has no intercept backend wired');
+    }
+    return startInterceptWithBackend(backend, options);
+  }
+
+  async #startSpawnIntercept(options: InterceptOptions | undefined): Promise<InterceptHandle> {
+    const known = this.opts.interceptSpawn;
+    if (known === undefined) {
+      throw new InterceptUnavailable('pass intercept: true to rift.spawn(...)');
+    }
+    // `RemoteClient` is the only `AdminApi` the spawn transport ever constructs (`spawnEngine`).
+    const backend = new RemoteInterceptBackend(this.adminClient as RemoteClient);
+    try {
+      return await startInterceptWithBackend(backend, { host: known.host, port: known.port, ...options });
+    } catch (error) {
+      // The flag WAS passed, so a 404 here means the spawned engine didn't actually bring up an
+      // intercept listener — surface that as an actionable InterceptUnavailable, not a raw 404.
+      if (error instanceof ImposterNotFound) {
+        throw new InterceptUnavailable(
+          'the spawned Rift engine did not start an intercept listener (its version may not support --intercept-port)'
+        );
+      }
+      throw error;
+    }
+  }
+
+  async #startRemoteIntercept(options: InterceptOptions | undefined): Promise<InterceptHandle> {
+    const adminUrl = this.adminClient.url;
+    if (adminUrl === undefined) {
+      throw new InterceptUnavailable('remote transport has no admin URL to attach intercept to');
+    }
+    const parsed = new URL(adminUrl);
+    // No documented endpoint reports an already-running remote engine's intercept listener port
+    // (rift#493 tracks a runtime start/status endpoint upstream); until it lands, attach defaults to
+    // the admin port unless the caller passes one explicitly.
+    const basePort = parsed.port !== '' ? Number(parsed.port) : undefined;
+    const port = options?.port ?? basePort;
+    if (port === undefined) {
+      // A URL like `https://host` (no explicit port) leaves nothing to point the SUT's proxy at —
+      // `Number('')` would silently yield 0. Require an explicit port instead of a wrong `:0`.
+      throw new InterceptUnavailable(
+        'remote intercept needs an explicit port — the admin URL has none; pass intercept({ port })'
+      );
+    }
+    const resolved: InterceptOptions = { host: parsed.hostname, ...options, port };
+    // `RemoteClient` is the only `AdminApi` the remote transport ever constructs (`connectEngine`).
+    const backend = new RemoteInterceptBackend(this.adminClient as RemoteClient);
+    try {
+      return await startInterceptWithBackend(backend, resolved);
+    } catch (error) {
+      if (error instanceof ImposterNotFound) {
+        throw new InterceptUnavailable('the Rift server must be started with --intercept-port');
+      }
+      throw error;
+    }
   }
 
   /** Idempotent. Closes the admin client even if `onClose` (e.g. killing a spawned process) throws,
@@ -768,9 +980,11 @@ async function connectEngine(url: string, opts: ConnectOptions = {}): Promise<En
 
 async function spawnEngine(opts: SpawnOptions = {}): Promise<Engine> {
   const spawned = await spawnProcess(opts);
+  const host = new URL(spawned.url).hostname;
   return new Engine(spawned.client, 'spawn', {
-    hostHint: new URL(spawned.url).hostname,
+    hostHint: host,
     onClose: () => spawned.close(),
+    interceptSpawn: spawned.interceptPort !== undefined ? { host, port: spawned.interceptPort } : undefined,
   });
 }
 

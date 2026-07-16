@@ -45,6 +45,14 @@ export interface NativeEngineLike {
   spaceListStubs(port: number, flowId: string): Promise<string>;
   spaceDelete(port: number, flowId: string): Promise<number>;
   spaceRecorded(port: number, flowId: string): Promise<string>;
+  /** Intercept (TLS-MITM, issue #11) — adapted by `EmbeddedInterceptBackend`, not routed through
+   * this class (there's no imposter/registry state involved). */
+  startIntercept(optionsJson: string): Promise<Record<string, unknown>>;
+  interceptAddRules(json: string): Promise<number>;
+  interceptClearRules(): Promise<number>;
+  interceptListRules(): Promise<string>;
+  interceptCaPem(): Promise<string>;
+  interceptExportTruststore(format: string, password: string, outPath: string): Promise<number>;
   serveAdmin(optionsJson: string): Promise<Record<string, unknown>>;
   close(): Promise<void>;
 }
