@@ -95,7 +95,14 @@ function labelFor(field: string): string {
 }
 
 function contentFor(l: LeafDetail): string {
-  const display = displayValue(l.actual);
+  let display: string;
+  if (l.note === undefined) {
+    display = displayValue(l.actual);
+  } else if (l.actual === undefined) {
+    display = `(${l.note})`;
+  } else {
+    display = `${displayValue(l.actual)} (${l.note})`;
+  }
   return l.key !== undefined ? `${l.key}: ${display}` : display;
 }
 
