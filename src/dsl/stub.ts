@@ -74,6 +74,7 @@ export class StubBuilder<P = Record<string, never>> {
   private routePatternOverride: string | undefined;
   private idValue: string | undefined;
   private spaceValue: string | undefined;
+  private scenarioNameValue: string | undefined;
 
   constructor(seeds?: Predicate[], routePattern?: string) {
     if (seeds !== undefined) this.predicateList.push(...seeds);
@@ -118,6 +119,13 @@ export class StubBuilder<P = Record<string, never>> {
     return this;
   }
 
+  /** Tags this stub with a bare `scenarioName` (grouping only — no FSM transition; use
+   * `scenario()` for state machines). */
+  inScenario(name: string): this {
+    this.scenarioNameValue = name;
+    return this;
+  }
+
   /** Explicit `Stub.route_pattern` override, taking precedence over the opener-derived one. */
   routePattern(pattern: string): this {
     this.routePatternOverride = pattern;
@@ -143,6 +151,7 @@ export class StubBuilder<P = Record<string, never>> {
     if (routePattern !== undefined) out.route_pattern = routePattern;
     if (this.idValue !== undefined) out.id = this.idValue;
     if (this.spaceValue !== undefined) out.space = this.spaceValue;
+    if (this.scenarioNameValue !== undefined) out.scenarioName = this.scenarioNameValue;
     return out;
   }
 }
