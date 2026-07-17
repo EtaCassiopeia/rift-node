@@ -20,6 +20,7 @@ import { dirname, join } from 'path';
 import { NativeLibraryError } from '../errors.js';
 import type { NativeBinding, NativePtr } from './native-binding.js';
 import type { Decode } from './native-call.js';
+import { traceFfi } from './debug-trace.js';
 
 type KoffiModule = typeof import('koffi');
 type KoffiLib = ReturnType<KoffiModule['load']>;
@@ -79,15 +80,19 @@ export async function loadNativeBinding(libPath: string): Promise<LoadedNative> 
 
   let lib: KoffiLib;
   try {
+    traceFfi(`koffi.load(${libPath})`);
     lib = koffi.load(libPath);
+    traceFfi('koffi.load:ok');
   } catch (err) {
     throw new NativeLibraryError(loadFailureMessage(libPath, err), { path: libPath, cause: err });
   }
 
+  traceFfi('koffi.opaque(RiftHandle)');
   const handlePtr = koffi.pointer(koffi.opaque('RiftHandle'));
 
   const bindProbe = (name: string, result: string, args: string[]): KoffiFunction => {
     try {
+      traceFfi(`bind:${name}`);
       return lib.func(name, result, args);
     } catch (err) {
       throw new NativeLibraryError(v1AbiMessage(libPath, MIN_ENGINE_VERSION), { path: libPath, cause: err });
@@ -96,6 +101,7 @@ export async function loadNativeBinding(libPath: string): Promise<LoadedNative> 
 
   const bindRequired = (name: string, result: string, args: string[]): KoffiFunction => {
     try {
+      traceFfi(`bind:${name}`);
       return lib.func(name, result, args);
     } catch (err) {
       throw new NativeLibraryError(
@@ -144,6 +150,7 @@ export async function loadNativeBinding(libPath: string): Promise<LoadedNative> 
     rift_free: bindRequired('rift_free', 'void', [PTR]),
   };
 
+  traceFfi('all-26-bound');
   const binding: NativeBinding = {
     rift_start: () => fn.rift_start() as NativePtr,
     rift_stop: (h) => {
