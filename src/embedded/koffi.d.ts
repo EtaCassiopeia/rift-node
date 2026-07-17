@@ -19,9 +19,13 @@ declare module 'koffi' {
   export function opaque(name: string): string;
   /** Wraps a type token as a pointer-to-that-type token. */
   export function pointer(type: string): string;
-  /** Decodes a raw pointer's memory according to `type` (e.g. `'string'` for a NUL-terminated
-   * UTF-8 `char*`). Does not free — the caller (`native-call.ts`) frees via `rift_free`. */
+  /** Decodes a raw pointer's memory as a fixed primitive `type` at `pointer`. Does not free — the
+   * caller (`native-call.ts`) frees via `rift_free`. */
   export function decode(pointer: unknown, type: string): string;
+  /** Decodes `length` elements of `type` at `pointer`; `('char', -1)` reads a NUL-terminated
+   * `char*` string AT the pointer (the correct read for the ABI's `char*` results — see the #53
+   * note in `ffi.ts`; the 2-arg `('string')` form double-dereferences and SIGSEGVs). */
+  export function decode(pointer: unknown, type: string, length: number): string;
 
   interface Koffi {
     load: typeof load;

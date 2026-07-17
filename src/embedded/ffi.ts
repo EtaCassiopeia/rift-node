@@ -11,6 +11,13 @@
  * Declares all 26 `librift_ffi` C-ABI v2 symbols. Every `char*`-typed result is declared as a raw
  * pointer (`'void *'`), never koffi's auto-decoding `'string'` result type — `native-call.ts`'s
  * `handleCall` is the only thing that decides when to decode and free.
+ *
+ * Reading the string back is done with `koffi.decode(ptr, 'char', -1)`, NOT `koffi.decode(ptr,
+ * 'string')` (#53). Given a raw `char*`, koffi's `'string'`/`'str'`/`'char *'` decode types treat
+ * the argument as a pointer-TO-a-string (`char**`) and dereference once too many — they read the
+ * first sizeof(ptr) bytes of the JSON, take those bytes as an address, and `strlen` them, which
+ * SIGSEGVs. `('char', -1)` reads a NUL-terminated char array AT the pointer, which is what the ABI
+ * actually returns, while keeping the raw `'void *'` so `rift_free` still owns the buffer.
  */
 
 import { readFileSync } from 'fs';
@@ -186,6 +193,6 @@ export async function loadNativeBinding(libPath: string): Promise<LoadedNative> 
     },
   };
 
-  const decode: Decode = (p) => koffi.decode(p, 'string');
+  const decode: Decode = (p) => koffi.decode(p, 'char', -1);
   return { binding, decode };
 }
