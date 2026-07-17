@@ -88,12 +88,18 @@ describe('issue #25 — export hygiene', () => {
     }
   });
 
-  it('AC4: every subpath source module is importable', async () => {
+  it('AC4: every subpath source module is importable (testkit/vitest excepted — see next test)', async () => {
     await expect(import('../../src/index.js')).resolves.toBeDefined();
     await expect(import('../../src/compat/index.js')).resolves.toBeDefined();
-    await expect(import('../../src/testkit/vitest.js')).resolves.toBeDefined();
     await expect(import('../../src/testkit/jest.js')).resolves.toBeDefined();
     await expect(import('../../src/intercept-undici.js')).resolves.toBeDefined();
+  });
+
+  it('AC4/issue #12: testkit/vitest hard-requires the optional `vitest` peer, absent here', async () => {
+    // Unlike the other subpaths, `testkit/vitest.ts` statically imports `vitest` at module scope
+    // (needed to build `riftTest` eagerly) — so importing it without the optional peer installed
+    // fails fast and by name, rather than silently degrading.
+    await expect(import('../../src/testkit/vitest.js')).rejects.toThrow(/vitest/);
   });
 
   it('AC4/AC5: exports map declares no CommonJS `require` condition (ESM-only)', () => {

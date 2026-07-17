@@ -7,6 +7,14 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **Test-framework glue** (`@rift-vs/rift/testkit/vitest`, `@rift-vs/rift/testkit/jest`): a per-worker
+  engine + per-test imposter auto-teardown. Vitest gets `riftTest`/`createRiftTest` fixtures; Jest gets
+  `setupRift` (beforeAll/afterEach/afterAll helpers). Both re-export `assertReceived(imposter, match,
+  count?)`, a thin assert-style delegate to `imposter.verify(...)` sharing the same `VerificationError`
+  renderer. The engine is chosen automatically (embedded when `koffi` is available, else spawn) or via
+  `transport`. `vitest` is an optional peer, imported only inside the vitest subpath. The README
+  documents the spaces-isolation pattern for a shared `connect` engine.
+
 - **TLS-MITM intercept surface** (`@rift-vs/rift`, issue #11): `engine.intercept(options?)` returns
   an `InterceptHandle` — `serve(match, response)`/`forward(match, to)`/`redirectTo(imposter)` build
   `wire.InterceptRule`s (host shorthand or AND-ed predicates), plus `addRule`/`rules`/`clearRules`,

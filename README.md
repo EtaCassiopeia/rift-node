@@ -81,6 +81,34 @@ in-process (`dlopen`), unlike a corrupt binary, which merely fails to exec.
 | `RIFT_OFFLINE` / `RIFT_SKIP_BINARY_DOWNLOAD` | both | air-gapped mode: never reach the network; resolution throws with manual-install instructions (file name, release URL, and the exact cache path to place it at) if nothing local is found |
 | `RIFT_SKIP_CHECKSUM` | engine binary only | opt out of a missing (not mismatched) checksum sidecar — **not available for the cdylib** |
 
+## Isolation
+
+By default, both the Vitest fixtures (`riftTest`) and the Jest helpers (`setupRift`) give each test
+its own imposters: one engine is shared per worker (acquired once, closed when the worker tears
+down), but every imposter a test `.create()`s is deleted automatically once that test ends — a
+`.get()`-attached handle is left alone, since attaching to an already-existing imposter isn't
+ownership. That's enough isolation for most suites without ever sharing state across tests.
+
+For a shared, already-running engine (`rift.connect(url)`, e.g. one Rift instance shared by an
+entire CI job) imposters generally can't be created/deleted per test without breaking other tests
+still running against them. Use the **spaces** pattern instead: build the shared imposter with
+`.flowIdFromHeader(...)` so Rift derives a per-request flow id from a header, then scope stub setup
+and verification to a fresh id per test via `.space(flowId)` — no imposter create/delete, and no
+cross-test bleed even though every test talks to the same imposter:
+
+```ts
+const users = await engine.get(sharedUsersPort); // a shared imposter, not created by this test
+const flowId = crypto.randomUUID();
+const space = users.space(flowId);
+
+await space.addStub(onGet('/api/users/1').willReturn(okJson({ id: 1 })));
+await callSut(users.url, { headers: { 'X-Flow-Id': flowId } });
+await space.verify(onGet('/api/users/1'), times(1));
+await space.delete(); // cleans up this test's slice only — the shared imposter itself lives on
+```
+
+(The imposter itself only needs `.flowIdFromHeader('X-Flow-Id')` set once, wherever it's created.)
+
 ## Migrating from Mountebank
 
 The existing drop-in story is preserved: `rift.create({ port, … })` remains available as a
