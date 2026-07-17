@@ -31,8 +31,9 @@ conditionalDescribe('embedded transport integration (real cdylib)', () => {
       expect(engine.buildInfo.length).toBeGreaterThan(0);
 
       const port = await engine.createImposter(
+        // Omit `port` to auto-assign an ephemeral port (as the DSL does). The FFI treats an explicit
+        // `port: 0` as a literal port, not "auto-assign" — only an absent port auto-assigns (#63).
         JSON.stringify({
-          port: 0,
           protocol: 'http',
           stubs: [
             {
