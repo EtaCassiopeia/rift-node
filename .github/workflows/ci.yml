@@ -47,6 +47,26 @@ jobs:
       - name: Test
         run: npm test
 
+  docs:
+    name: docs (examples + embed check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck examples
+        run: npm run typecheck:examples
+
+      - name: Check README/docs embeds match examples/*.ts
+        run: npm run docs:check
+
   embedded-conformance:
     name: embedded conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
