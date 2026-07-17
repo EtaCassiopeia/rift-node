@@ -2,15 +2,16 @@
 /**
  * docs:embed checker (issue #14) — the "docs don't rot" mechanism.
  *
- * Every runnable code snippet in README.md / docs/*.md is generated FROM an example file in
+ * Every runnable code snippet in README.md / docs/*.md / docs/design/*.md is generated FROM an example file in
  * examples/*.ts, never hand-copied. This script enforces that: it extracts the marked region from
  * each `examples/*.ts` file and the fenced code block each markdown `<!-- docs:embed <anchor> -->`
  * marker introduces, normalizes both, and fails (naming the anchor + files) on any mismatch.
  *
  * ── Convention ──────────────────────────────────────────────────────────────────────────────────
  *
- * In a markdown file (README.md, or any docs/*.md — NOT its subdirectories, so docs/design/*.md is
- * exempt as design/reference material, not a snippet source):
+ * In a markdown file (README.md, any docs/*.md, or docs/design/*.md — the canonical API
+ * reference's runnable snippets are checked too; fences without a marker, e.g. type-signature
+ * listings, are exempt):
  *
  *   <!-- docs:embed my-anchor -->
  *   ```ts
@@ -148,6 +149,10 @@ function listMarkdownFiles() {
   for (const f of readdirSync(docsDir)) {
     if (f.endsWith('.md')) files.push(join(docsDir, f));
   }
+  const designDir = join(docsDir, 'design');
+  for (const f of readdirSync(designDir)) {
+    if (f.endsWith('.md')) files.push(join(designDir, f));
+  }
   return files;
 }
 
@@ -221,7 +226,7 @@ const exampleRegions = extractExampleRegions();
 const markdownBlocks = extractMarkdownBlocks();
 
 if (markdownBlocks.length === 0) {
-  fail('no `<!-- docs:embed ... -->` blocks found in README.md/docs/*.md — did the docs restructure regress?');
+  fail('no `<!-- docs:embed ... -->` blocks found in README.md/docs/**/*.md — did the docs restructure regress?');
 }
 
 const usedAnchors = new Set();
