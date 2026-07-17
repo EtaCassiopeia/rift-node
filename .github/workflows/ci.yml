@@ -186,7 +186,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        mode: [asis, no-free]
+        # asis      — shipped decode + rift_free discipline.
+        # no-free   — rift_free calls no-op'd (H2: is the crash a free?). Refuted: still segfaults.
+        # no-decode — RIFT_FFI_DEBUG_NO_DECODE skips koffi.decode(char*,'string') (which runs strlen
+        #             on the result pointer). If the strlen crash DISAPPEARS -> it's the result-decode
+        #             path; if it PERSISTS -> it's argument marshalling. Per-symbol trace (all modes)
+        #             names the crashing symbol via RIFT_FFI_DEBUG_TRACE.
+        mode: [asis, no-free, no-decode]
     env:
       RIFT_CACHE_DIR: ${{ github.workspace }}/.rift-cache
     steps:
@@ -249,14 +255,22 @@ jobs:
         env:
           RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
           NODE_OPTIONS: --report-on-fatalerror --report-directory=${{ github.workspace }}/node-reports
+          # Per-symbol trace (all modes): the worker appends each native symbol name synchronously
+          # before the call, so the file's last line names the crashing symbol.
+          RIFT_FFI_DEBUG_TRACE: ${{ github.workspace }}/ffi-trace.log
+          # no-decode mode only: skip koffi.decode. Empty string (other modes) is falsy -> inert.
+          RIFT_FFI_DEBUG_NO_DECODE: ${{ matrix.mode == 'no-decode' && '1' || '' }}
         run: |
           ulimit -c unlimited
           mkdir -p "$GITHUB_WORKSPACE/node-reports"
+          rm -f "$GITHUB_WORKSPACE/ffi-trace.log"
           set +e
           npm run test:embedded 2>&1 | tee test-output.log
           code=${PIPESTATUS[0]}
           set -e
           echo "test:embedded exit code = $code (139 = SIGSEGV, 134 = SIGABRT)"
+          echo "----- last native symbols traced before exit (culprit = last line) -----"
+          tail -n 15 "$GITHUB_WORKSPACE/ffi-trace.log" 2>/dev/null || echo "(no trace file — crash before first traced call, or tracing not reached)"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Extract native backtrace (Linux / gdb)
@@ -302,6 +316,7 @@ jobs:
           path: |
             backtrace.txt
             test-output.log
+            ffi-trace.log
             node-reports/
             macos-crashlogs/
             cores/
