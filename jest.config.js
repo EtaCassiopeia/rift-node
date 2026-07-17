@@ -15,6 +15,9 @@ export default {
     ],
   },
   testMatch: ['**/test/**/*.test.ts'],
+  // Polyfill Symbol.asyncDispose/dispose in the vm context (absent on Node 20/22) so `await using`
+  // works in tests; the embedded config inherits this via `...base` (#62).
+  setupFiles: ['<rootDir>/test/jest.setup.ts'],
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.d.ts'],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov'],
