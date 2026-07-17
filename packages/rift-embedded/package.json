@@ -1,0 +1,49 @@
+{
+  "name": "@rift-vs/rift-embedded",
+  "version": "0.12.1",
+  "description": "Embedded (in-process) engine transport for @rift-vs/rift \u2014 koffi FFI binding to librift_ffi. Installing this package is what opts a project into rift.embedded().",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "node --experimental-vm-modules ../../node_modules/jest/bin/jest.js",
+    "lint": "eslint src test --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "koffi": "^2.9.0"
+  },
+  "peerDependencies": {
+    "@rift-vs/rift": "*"
+  },
+  "devDependencies": {
+    "@rift-vs/rift": "*",
+    "typescript": "^5.3.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.10.0",
+    "eslint": "^8.56.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "minEngineVersion": "0.12.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EtaCassiopeia/rift-node.git",
+    "directory": "packages/rift-embedded"
+  }
+}
