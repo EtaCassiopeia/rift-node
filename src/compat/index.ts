@@ -145,49 +145,86 @@ async function resolveEngineBinary(): Promise<string> {
 }
 
 /**
+ * @internal Injectable so `create()`'s process spawn and binary resolution are unit-testable with
+ * fakes (same seam pattern as `testkit/core.ts`'s `AcquireEngineDeps`) — no real binary involved.
+ */
+export interface CreateDeps {
+  spawn: typeof spawnProcess;
+  resolveEngineBinary: () => Promise<string>;
+}
+
+const defaultDeps: CreateDeps = { spawn: spawnProcess, resolveEngineBinary };
+
+/**
  * Create a Rift server, Mountebank-`mb.create()`-compatibly.
  *
  * @param options Server configuration. `redis` and `impostersRepository` are accepted-and-ignored
  *   (Mountebank compatibility) — configure flow state per-imposter via the DSL's `flowState()`.
  * @returns A {@link RiftServer} handle.
  */
-export async function create(options: CreateOptions = {}): Promise<RiftServer> {
+export async function create(
+  options: CreateOptions = {},
+  deps: CreateDeps = defaultDeps
+): Promise<RiftServer> {
   const port = options.port || DEFAULT_PORT;
   const host = options.host || DEFAULT_HOST;
   const args = buildCliArgs(options);
 
-  const binaryPath = await resolveEngineBinary();
+  const binaryPath = await deps.resolveEngineBinary();
 
-  const proc = spawnProcess(binaryPath, args, {
+  const proc = deps.spawn(binaryPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
   });
 
   let stderr = '';
-  proc.stderr?.on('data', (data) => {
+  const onStderrData = (data: Buffer | string): void => {
     stderr += data.toString();
+  };
+  proc.stderr?.on('data', onStderrData);
+
+  let onSpawnError!: (error: Error) => void;
+  const spawnErrorPromise = new Promise<never>((_, reject) => {
+    onSpawnError = (error: Error) => reject(new Error(`Failed to start Rift: ${error.message}`));
+    proc.once('error', onSpawnError);
   });
 
-  proc.on('error', (error) => {
-    throw new Error(`Failed to start Rift: ${error.message}`);
-  });
-
+  let onEarlyExit!: (code: number | null, signal: NodeJS.Signals | null) => void;
   const earlyExitPromise = new Promise<never>((_, reject) => {
-    proc.once('exit', (code, signal) => {
+    onEarlyExit = (code, signal) => {
       if (code !== null && code !== 0) {
         reject(new Error(`Rift process exited with code ${code}.\nStderr: ${stderr || 'none'}`));
       } else if (signal) {
-        reject(new Error(`Rift process killed by signal ${signal}`));
+        reject(
+          new Error(`Rift process killed by signal ${signal}.\nStderr: ${stderr || 'none'}`)
+        );
+      } else {
+        reject(
+          new Error(`Rift process exited with code 0 during startup.\nStderr: ${stderr || 'none'}`)
+        );
       }
-    });
+    };
+    proc.once('exit', onEarlyExit);
   });
 
   try {
-    await Promise.race([waitForServer(host, port, STARTUP_TIMEOUT_MS), earlyExitPromise]);
+    await Promise.race([
+      waitForServer(host, port, STARTUP_TIMEOUT_MS),
+      earlyExitPromise,
+      spawnErrorPromise,
+    ]);
   } catch (error) {
     proc.kill('SIGKILL');
     throw error;
   }
+
+  // The startup-scoped listeners must not linger: after a successful startup, child 'error'/'exit'
+  // events belong to RiftServerImpl's re-emitting handlers (`server.on('error' | 'exit', ...)`).
+  // (`Promise.race` already subscribed to both promises, so a late rejection could never surface as
+  // an unhandled rejection either way — removal just keeps the ownership handoff explicit.)
+  proc.off('error', onSpawnError);
+  proc.off('exit', onEarlyExit);
+  proc.stderr?.off('data', onStderrData);
 
   return new RiftServerImpl(port, host, proc);
 }
