@@ -659,9 +659,10 @@ process.
   `versionCheck: 'warn'`). `requireFeatures: ['javascript']` asserts compiled-in features.
 - CI: the embedded conformance lane runs against the built `dist/` (the worker resolves
   `./worker.js` relative to the compiled module; `jest.embedded.config.js` remaps `src/` imports
-  to `dist/`, #44). The lane is allowed-failure until **#53** — a cross-platform segfault in the
-  full librift_ffi/koffi binding, exposed the moment the harness first genuinely ran the FFI — is
-  fixed; then it becomes the required M8 gate. The Windows lane stays experimental.
+  to `dist/`, #44). It is the **required M8 gate** on ubuntu + macos: it genuinely exercises the
+  FFI and passes now that the #53 segfault (and the #62/#63/#65 follow-ons it unmasked) are fixed.
+  A cdylib-fetch 404 self-skips the embedded describes rather than failing, so only a genuine
+  embedded-test failure blocks merges. The Windows lane stays experimental.
 
 ```ts
 interface EmbeddedOptions {
@@ -753,8 +754,8 @@ transport → replay recorded interactions → byte-compare responses. **Express
 fixture name must have an entry in `test/conformance/dsl-coverage.ts` mapping it to a DSL
 reconstruction whose `build()` output deep-equals the fixture (modulo defaults); a missing/failing
 entry fails CI naming the gap. Details in issues #7/#13. Remote + spawn lanes are required; the
-embedded lane runs against the built `dist/` (**#44**) but stays allowed-failure until the FFI
-segfault **#53** is fixed, at which point it becomes required. The Windows lane stays experimental.
+embedded lane runs against the built `dist/` (**#44**) and is now **required** on ubuntu + macos
+(the FFI segfault **#53** and its follow-ons are fixed). The Windows lane stays experimental.
 
 ## 12. Issue map — delivered ledger
 
@@ -788,7 +789,6 @@ Open follow-ups (this repo):
 | #28 | §10 — compat `create()` spawn-failure `'error'` listener crashes the host |
 | #33 | §6.2 — evaluator ergonomics (field-name validation, typed regex errors, body diagnostics) |
 | #39 | §2 — `@rift-vs/rift-embedded` package split (deferred; trigger conditions in the issue) |
-| #44 | §8.2/§11 — promote the embedded lane to required gate (harness shipped; blocked by #53) |
 | #53 | §8.2 — cross-platform segfault running the full librift_ffi/koffi binding |
 
 Open upstream (rift engine):
