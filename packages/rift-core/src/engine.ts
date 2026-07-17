@@ -1006,6 +1006,10 @@ export interface EmbeddedOptions {
   /** Build-variant features (e.g. `'javascript'`) the loaded cdylib must report; missing ones fail
    * preflight regardless of `versionCheck` — this is a build-variant property, not a version gate. */
   requireFeatures?: string[];
+  /** Keep the process alive while the engine is open — the standalone mock-server shape (#70):
+   * load imposters, then let main return; the process serves until killed or `close()`d. Default
+   * false: an idle engine never blocks process exit (awaited calls always complete either way). */
+  keepAlive?: boolean;
 }
 
 // The specifier lives in a const so tsc does NOT type-resolve the import: core must compile before

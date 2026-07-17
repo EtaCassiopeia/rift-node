@@ -66,6 +66,18 @@ No Docker, no child process, OS-assigned ports. Requires the companion embedded 
 `npm i -D @rift-vs/rift-embedded` (it brings `koffi` with it). See
 [`examples/quickstart-embedded.ts`](examples/quickstart-embedded.ts).
 
+Running as a **standalone mock server** (a Mountebank-style long-lived process rather than inside
+a test runner)? Pass `keepAlive: true` so the process stays alive while the engine is open:
+
+```ts
+const engine = await rift.embedded({ keepAlive: true });
+await engine.create(fromJson(imposterJson)); // e.g. a Mountebank imposter file, verbatim
+// main returns; the process keeps serving until killed (or engine.close()).
+```
+
+Without the flag an idle engine never blocks process exit — awaited calls always complete either
+way (#70).
+
 <!-- docs:embed quickstart-embedded -->
 ```ts
 import { rift, imposter, onGet, okJson } from '@rift-vs/rift';

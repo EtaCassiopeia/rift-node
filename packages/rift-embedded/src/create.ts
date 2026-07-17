@@ -25,15 +25,15 @@ export type { EmbeddedOptions };
 
 export interface EmbeddedDeps {
   /** Injectable native-engine loader; defaults to `resolveCdylib` + `NativeEngine.load`. Supplying
-   * this SKIPS `resolveCdylib` entirely — tests inject a fake loader with no real cdylib involved. */
+   * this SKIPS `resolveCdylib` entirely — tests inject a fake loader with no real cdylib involved.
+   * Note: `options.keepAlive` is forwarded only by the DEFAULT loader; an injected loader owns its
+   * worker lifecycle and must handle keep-alive itself if it cares. */
   loadNativeEngine?: (libPath: string) => Promise<NativeEngineLike>;
   /** Injectable admin-plane starter, forwarded to `EmbeddedAdmin`; see `admin.ts`'s `StartAdminPlane`. */
   startAdminPlane?: StartAdminPlane;
 }
 
-async function defaultLoadNativeEngine(libPath: string): Promise<NativeEngineLike> {
-  return NativeEngine.load(libPath);
-}
+
 
 /**
  * `native.buildInfo` is the FFI's build-info payload, JSON-encoded (`{version, commit?, builtAt?,
@@ -89,7 +89,9 @@ export async function createEmbeddedEngine(
   options: EmbeddedOptions = {},
   deps: EmbeddedDeps = {}
 ): Promise<Engine> {
-  const loadNativeEngine = deps.loadNativeEngine ?? defaultLoadNativeEngine;
+  const loadNativeEngine =
+    deps.loadNativeEngine ??
+    ((p: string): Promise<NativeEngineLike> => NativeEngine.load(p, { keepAlive: options.keepAlive }));
 
   const libPath =
     deps.loadNativeEngine !== undefined
