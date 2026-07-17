@@ -27,12 +27,26 @@ describe('issue #25 — exports map resolves to built output (AC4)', () => {
   });
 
   it('the package resolves every subpath through its own exports map (self-reference import)', () => {
-    const specifiers = Object.keys(pkg.exports).map((s) =>
-      s === '.' ? pkg.name : `${pkg.name}/${s.replace(/^\.\//, '')}`
-    );
+    const specifiers = Object.keys(pkg.exports)
+      // `./testkit/vitest` hard-requires the optional `vitest` peer dependency (issue #12), which
+      // isn't installed here — covered separately below instead of lumped into this all-resolve check.
+      .filter((s) => s !== './testkit/vitest')
+      .map((s) => (s === '.' ? pkg.name : `${pkg.name}/${s.replace(/^\.\//, '')}`));
     const script = specifiers.map((s) => `await import(${JSON.stringify(s)});`).join('\n');
     // Runs in a child node process with cwd at the package root so Node self-references `pkg.name`
     // via the exports map. Throws (non-zero exit) if any subpath fails to resolve or load.
     execSync(`node --input-type=module -e "${script.replace(/"/g, '\\"')}"`, { cwd: repoRoot, stdio: 'pipe', shell: true });
+  }, 30_000);
+
+  it('./testkit/vitest resolves through the exports map to dist, failing only on the missing `vitest` peer', () => {
+    const specifier = `${pkg.name}/testkit/vitest`;
+    const script = `await import(${JSON.stringify(specifier)});`;
+    expect(() =>
+      execSync(`node --input-type=module -e "${script.replace(/"/g, '\\"')}"`, {
+        cwd: repoRoot,
+        stdio: 'pipe',
+        shell: true,
+      })
+    ).toThrow(/Cannot find package 'vitest'/);
   }, 30_000);
 });
