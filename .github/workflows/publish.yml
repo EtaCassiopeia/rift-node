@@ -16,7 +16,8 @@ env:
   RIFT_SKIP_BINARY_DOWNLOAD: '1'
 
 jobs:
-  # Runs on every push/PR. Validates the publishable tarball against a UNIQUE snapshot
+  # Runs on every push/PR. Validates BOTH workspace tarballs (@rift-vs/rift +
+  # @rift-vs/rift-embedded, versioned in lockstep) against a UNIQUE snapshot
   # prerelease version, so it can never conflict with an already-published version — unlike
   # dry-running the stable version, which would break the day that stable version ships.
   dry-run:
@@ -34,12 +35,12 @@ jobs:
       - name: Stamp snapshot version
         shell: bash
         run: |
-          base="$(node -p "require('./package.json').version")"
+          base="$(node -p "require('./packages/rift-core/package.json').version")"
           snap="${base%-*}-snapshot.${GITHUB_RUN_NUMBER}.g$(git rev-parse --short HEAD)"
           echo "Snapshot version: $snap"
-          npm version "$snap" --no-git-tag-version --allow-same-version
+          npm version "$snap" --no-git-tag-version --allow-same-version -w @rift-vs/rift -w @rift-vs/rift-embedded
       - name: npm publish --dry-run
-        run: npm publish --dry-run --access public --tag snapshot
+        run: npm publish --dry-run --access public --tag snapshot -w @rift-vs/rift -w @rift-vs/rift-embedded
 
   # Publishes a snapshot prerelease under the `snapshot` dist-tag on every push to master.
   # Soft-gated on NPM_TOKEN: without the secret it logs and skips (CI stays green); once the
@@ -69,10 +70,10 @@ jobs:
             echo "NPM_TOKEN not set — skipping snapshot publish."
             exit 0
           fi
-          base="$(node -p "require('./package.json').version")"
+          base="$(node -p "require('./packages/rift-core/package.json').version")"
           snap="${base%-*}-snapshot.${GITHUB_RUN_NUMBER}.g$(git rev-parse --short HEAD)"
-          npm version "$snap" --no-git-tag-version --allow-same-version
-          npm publish --access public --tag snapshot --provenance
+          npm version "$snap" --no-git-tag-version --allow-same-version -w @rift-vs/rift -w @rift-vs/rift-embedded
+          npm publish --access public --tag snapshot --provenance -w @rift-vs/rift -w @rift-vs/rift-embedded
 
   # Real stable publish, gated on a GitHub Release. Publishes the package.json version as-is
   # under `latest`. Requires the NPM_TOKEN secret and a tag matching package.json.
@@ -96,12 +97,12 @@ jobs:
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          pkg="$(node -p "require('./package.json').version")"
+          pkg="$(node -p "require('./packages/rift-core/package.json').version")"
           if [ "$tag" != "$pkg" ]; then
             echo "Release tag ($tag) does not match package.json version ($pkg)" >&2
             exit 1
           fi
       - name: npm publish
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance -w @rift-vs/rift -w @rift-vs/rift-embedded
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

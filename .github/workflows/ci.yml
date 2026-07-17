@@ -104,7 +104,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.RIFT_CACHE_DIR }}
-          key: rift-ffi-${{ matrix.os }}-${{ hashFiles('package.json') }}
+          key: rift-ffi-${{ matrix.os }}-${{ hashFiles('packages/rift-embedded/package.json') }}
 
       # Best-effort fetch of the published cdylib: on a transient failure (network, a classifier
       # not yet published) `continue-on-error` leaves `RIFT_FFI_LIB` unset and the embedded
@@ -147,7 +147,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.RIFT_CACHE_DIR }}
-          key: rift-ffi-windows-latest-${{ hashFiles('package.json') }}
+          key: rift-ffi-windows-latest-${{ hashFiles('packages/rift-embedded/package.json') }}
 
       # Same best-effort/self-skip reasoning as the ubuntu/macos job above; `shell: bash` so the
       # `$(...)`/`>>` output-capture syntax is portable to the Windows runner.
@@ -211,9 +211,9 @@ jobs:
       - name: Patch out rift_free (no-free mode only)
         if: matrix.mode == 'no-free'
         run: |
-          perl -pi -e 's/binding\.rift_free\(/void (/g' src/embedded/native-call.ts
+          perl -pi -e 's/binding\.rift_free\(/void (/g' packages/rift-embedded/src/native-call.ts
           echo "----- patched native-call.ts rift_free call sites -----"
-          grep -n "rift_free\|void (" src/embedded/native-call.ts || true
+          grep -n "rift_free\|void (" packages/rift-embedded/src/native-call.ts || true
 
       - name: Build
         run: npm run build
@@ -222,7 +222,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.RIFT_CACHE_DIR }}
-          key: rift-ffi-${{ matrix.os }}-${{ hashFiles('package.json') }}
+          key: rift-ffi-${{ matrix.os }}-${{ hashFiles('packages/rift-embedded/package.json') }}
 
       # Fetch is REQUIRED here (unlike the conformance lane): a debug run that self-skips the FFI is
       # pointless, so a failed fetch should fail loudly rather than silently skip.
