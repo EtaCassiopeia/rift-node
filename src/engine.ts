@@ -24,7 +24,7 @@ import type {
   Stub,
 } from './model/index.js';
 import { ImposterBuilder } from './dsl/imposter.js';
-import { StubBuilder } from './dsl/stub.js';
+import { StubBuilder, type AnyStubBuilder } from './dsl/stub.js';
 import type { ResponseBuilder } from './dsl/response.js';
 import { RemoteClient, normalizeUrl, type FlowScopedOptions } from './remote/client.js';
 import { spawn as spawnProcess, type SpawnOptions } from './spawn/spawn.js';
@@ -131,7 +131,7 @@ export interface FlowStateHandle {
 
 export interface SpaceHandle {
   readonly flowId: string;
-  addStub(stub: StubBuilder | Stub): Promise<void>;
+  addStub(stub: AnyStubBuilder | Stub): Promise<void>;
   stubs(): Promise<{ space: string; stubs: Stub[] }>;
   delete(): Promise<void>;
 
@@ -153,9 +153,9 @@ export interface ImposterHandle extends AsyncDisposable {
   readonly protocol: 'http' | 'https';
 
   // stub surgery
-  addStub(stub: StubBuilder | Stub, opts?: { index?: number }): Promise<void>;
-  replaceStubs(...stubs: Array<StubBuilder | Stub>): Promise<void>;
-  updateStub(ref: number | { id: string }, stub: StubBuilder | Stub): Promise<void>;
+  addStub(stub: AnyStubBuilder | Stub, opts?: { index?: number }): Promise<void>;
+  replaceStubs(...stubs: Array<AnyStubBuilder | Stub>): Promise<void>;
+  updateStub(ref: number | { id: string }, stub: AnyStubBuilder | Stub): Promise<void>;
   deleteStub(ref: number | { id: string }): Promise<void>;
   stubs(): Promise<Stub[]>;
 
@@ -251,7 +251,7 @@ function toWireImposter(def: ImposterBuilder | Imposter): Imposter {
   return wire.protocol === undefined ? { ...wire, protocol: 'http' } : wire;
 }
 
-function toWireStub(def: StubBuilder | Stub): Stub {
+function toWireStub(def: AnyStubBuilder | Stub): Stub {
   return def instanceof StubBuilder ? def.build() : def;
 }
 
@@ -307,7 +307,7 @@ class SpaceHandleImpl implements SpaceHandle {
     this.state = new FlowStateHandleImpl(admin, port, flowId);
   }
 
-  async addStub(stub: StubBuilder | Stub): Promise<void> {
+  async addStub(stub: AnyStubBuilder | Stub): Promise<void> {
     await this.admin.addSpaceStub(this.port, this.flowId, toWireStub(stub));
   }
 
@@ -488,15 +488,15 @@ class ImposterHandleImpl implements ImposterHandle {
     this.url = `${this.protocol}://${reachableHost(hostHint, imp.host)}:${this.port}`;
   }
 
-  async addStub(stub: StubBuilder | Stub, opts?: { index?: number }): Promise<void> {
+  async addStub(stub: AnyStubBuilder | Stub, opts?: { index?: number }): Promise<void> {
     await this.admin.addStub(this.port, toWireStub(stub), opts?.index);
   }
 
-  async replaceStubs(...stubs: Array<StubBuilder | Stub>): Promise<void> {
+  async replaceStubs(...stubs: Array<AnyStubBuilder | Stub>): Promise<void> {
     await this.admin.replaceStubs(this.port, stubs.map(toWireStub));
   }
 
-  async updateStub(ref: number | { id: string }, stub: StubBuilder | Stub): Promise<void> {
+  async updateStub(ref: number | { id: string }, stub: AnyStubBuilder | Stub): Promise<void> {
     await this.admin.updateStub(this.port, ref, toWireStub(stub));
   }
 

@@ -9,7 +9,7 @@
  */
 
 import type { Predicate, RecordedRequest as WireRecordedRequest } from '../model/index.js';
-import { StubBuilder } from '../dsl/stub.js';
+import { StubBuilder, type AnyStubBuilder } from '../dsl/stub.js';
 
 /** An ergonomic, already-mapped recorded request — `raw` keeps the untouched wire object. */
 export interface RecordedRequest {
@@ -28,7 +28,7 @@ export interface RecordedRequest {
 }
 
 /** A `StubBuilder` used as a match contributes only its predicates — its responses are ignored. */
-export type RequestMatch = StubBuilder | Predicate | Predicate[];
+export type RequestMatch = AnyStubBuilder | Predicate | Predicate[];
 
 export interface CountMatcher {
   readonly min: number;

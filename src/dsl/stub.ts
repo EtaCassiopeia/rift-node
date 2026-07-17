@@ -156,6 +156,17 @@ export class StubBuilder<P = Record<string, never>> {
   }
 }
 
+/**
+ * Upper bound over every path-param typing of `StubBuilder`. Consuming positions
+ * (`imposter().stub()`, `verify()`, `scenario().when()`, the stub-surgery methods) accept this,
+ * never the bare `StubBuilder` — the bare form is `StubBuilder<Record<string, never>>`, into which
+ * a param-typed `StubBuilder<{ id: string }>` is NOT assignable (`string` ⊄ `never`). The phantom
+ * `__params` is covariant (optional + readonly), and `PathParams<P>` (all-`string` values) is
+ * assignable to `Record<string, string>`, so both the bare default and any param-typed builder
+ * widen to this bound (#47).
+ */
+export type AnyStubBuilder = StubBuilder<Record<string, string>>;
+
 /** Bare stub with no seeded predicate. */
 export function stub(): StubBuilder {
   return new StubBuilder();

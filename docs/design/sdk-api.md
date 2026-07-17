@@ -268,10 +268,35 @@ stub-level `routePattern` (param extraction for templates/scripts — Rift's `ro
 extraction-only, it never matches) AND a derived anchored regex path predicate
 (`{ matches: { path: "^/users/[^/]+$" } }`). Opt out with `{ params: false }` to treat `:` as a
 literal. Param names are captured at the type level (`StubBuilder<{ id: string }>`) for editor
-hints; purely compile-time. **Known gap**: the param-typed builder does not currently compose —
-consuming positions (`imposter().stub()`, `verify()`, `scenario().when()`) accept only the bare
-`StubBuilder`, so passing a param-typed one is a compile error; tracked as **#47**. The wire
-output (`routePattern` + derived regex predicate) is unaffected.
+hints; purely compile-time. A param-typed builder composes into every consuming position —
+`imposter().stub()`, `scenario().when()`, the `ImposterHandle` stub-surgery methods, and
+`verify()` — because those accept the `AnyStubBuilder` upper bound rather than the bare
+`StubBuilder` (#47). The wire output (`routePattern` + derived regex predicate) is unaffected.
+
+<!-- docs:embed sdk-api-path-params -->
+```ts
+// A `:name` segment makes the opener return a param-typed builder — and it composes everywhere.
+await using engine = await rift.embedded();
+
+const users = await engine.create(
+  imposter('users').record()
+    // ...into imposter().stub()
+    .stub(onGet('/api/users/:id').willReturn(okJson({ id: 1, name: 'Alice' })))
+    // ...into scenario().when()
+    .scenario(
+      scenario('activation')
+        .when('start', onPut('/api/users/:id')).respond(status(202)).goTo('active')));
+
+// ...into the ImposterHandle stub-surgery methods
+await users.addStub(onGet('/api/users/:id/posts').willReturn(okJson([])));
+await users.replaceStubs(onGet('/api/users/:id').willReturn(okJson({ id: 2, name: 'Bob' })));
+await users.updateStub({ id: 'u' }, onGet('/api/users/:id').willReturn(okJson({ id: 3 })));
+
+await fetch(`${users.url}/api/users/1`);
+
+// ...into verify() (a param-typed builder is a valid RequestMatch)
+await users.verify(onGet('/api/users/:id'), times(1));
+```
 
 ### 5.2 Matchers (field-agnostic, bind via `with*` or field binders)
 
@@ -764,7 +789,6 @@ Open follow-ups (this repo):
 | #33 | §6.2 — evaluator ergonomics (field-name validation, typed regex errors, body diagnostics) |
 | #39 | §2 — `@rift-vs/rift-embedded` package split (deferred; trigger conditions in the issue) |
 | #44 | §8.2/§11 — promote the embedded lane to required gate (harness shipped; blocked by #53) |
-| #47 | §5.1 — param-typed `StubBuilder` does not compose into consuming positions |
 | #53 | §8.2 — cross-platform segfault running the full librift_ffi/koffi binding |
 
 Open upstream (rift engine):
