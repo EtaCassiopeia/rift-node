@@ -226,3 +226,35 @@ describe('DSL #24 — full example round-trips', () => {
     expect(fromJson(toWireJson(imp))).toEqual(imp);
   });
 });
+
+describe('DSL #65 — imposter().stub() accepts raw Stub objects', () => {
+  it('accepts a raw Stub object (no builder)', () => {
+    const rawStub = {
+      predicates: [{ equals: { method: 'GET', path: '/x' } }],
+      responses: [{ is: { statusCode: 204 } }],
+    };
+    const imp = imposter('s').stub(rawStub).build();
+    expect(imp.stubs).toEqual([rawStub]);
+  });
+
+  it('accepts an inject raw Stub (no DSL builder path needed)', () => {
+    const imp = imposter('injected')
+      .stub({ responses: [{ inject: 'function(config) { return { statusCode: 202 }; }' }] })
+      .build();
+    expect(imp.stubs?.[0]?.responses?.[0]).toEqual({
+      inject: 'function(config) { return { statusCode: 202 }; }',
+    });
+  });
+
+  it('mixes StubBuilder and raw Stub in call order', () => {
+    const imp = imposter('s')
+      .stub(onGet('/a').willReturn(okJson({ a: 1 })))
+      .stub({ predicates: [{ equals: { path: '/b' } }], responses: [{ is: { statusCode: 200 } }] })
+      .build();
+    expect(imp.stubs).toHaveLength(2);
+    expect(imp.stubs?.[1]).toEqual({
+      predicates: [{ equals: { path: '/b' } }],
+      responses: [{ is: { statusCode: 200 } }],
+    });
+  });
+});
