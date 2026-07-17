@@ -335,6 +335,10 @@ class FakeWorker implements WorkerLike {
     );
   }
 
+  ref(): void {
+    // no-op: nothing to ref on a fake.
+  }
+
   unref(): void {
     // no-op: nothing to unref on a fake.
   }

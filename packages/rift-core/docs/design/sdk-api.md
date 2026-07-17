@@ -672,6 +672,9 @@ interface EmbeddedOptions {
   download?: boolean;               // default true; false = resolve offline or throw
   versionCheck?: 'fail' | 'warn' | 'off';
   requireFeatures?: string[];
+  keepAlive?: boolean;              // #70: hold the process alive while the engine is open —
+                                    // the standalone mock-server shape. Default false: an idle
+                                    // engine never blocks exit (awaited calls always complete).
 }
 ```
 

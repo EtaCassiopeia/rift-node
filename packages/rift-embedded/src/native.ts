@@ -25,12 +25,17 @@ export interface WorkerLike {
   on(event: string, listener: (...args: unknown[]) => void): void;
   off(event: string, listener: (...args: unknown[]) => void): void;
   terminate(): Promise<number>;
+  ref(): void;
   unref(): void;
 }
 
 export interface NativeEngineLoadOptions {
   /** Injectable worker transport; defaults to a real `worker_threads.Worker` running `worker.js`. */
   createWorker?: () => WorkerLike;
+  /** Keep the worker (and therefore the process) alive while the engine is open, instead of only
+   * while a call is in flight — the standalone mock-server shape (#70). Default false: an idle
+   * engine never blocks process exit. */
+  keepAlive?: boolean;
 }
 
 function defaultCreateWorker(): WorkerLike {
@@ -55,10 +60,12 @@ export class NativeEngine {
   #state: EngineState = 'open';
   #closePromise: Promise<void> | null = null;
   #exitHandler: (() => void) | null = null;
+  readonly #keepAlive: boolean;
 
-  private constructor(worker: WorkerLike, buildInfo: string) {
+  private constructor(worker: WorkerLike, buildInfo: string, keepAlive: boolean) {
     this.#worker = worker;
     this.buildInfo = buildInfo;
+    this.#keepAlive = keepAlive;
     worker.on('message', (raw: unknown) => this.#onMessage(raw as FromWorkerMessage));
     worker.on('exit', () => this.#onUnexpectedExit());
     // A post-init uncaught throw in the worker emits 'error'; with NO listener, Node's default is to
@@ -127,8 +134,11 @@ export class NativeEngine {
       throw err;
     }
 
-    const engine = new NativeEngine(worker, ready.buildInfo);
-    worker.unref();
+    const engine = new NativeEngine(worker, ready.buildInfo, opts.keepAlive === true);
+    // Idle engines must never block process exit — but ONLY idle ones: #call re-refs the worker
+    // while a call is in flight (an awaited call being dropped by loop-drain was #70), and
+    // `keepAlive` pins it for standalone mock-server processes.
+    if (opts.keepAlive !== true) worker.unref();
     return engine;
   }
 
@@ -137,6 +147,7 @@ export class NativeEngine {
     const pending = this.#pending.get(msg.id);
     if (!pending) return; // late response for a call already rejected by close(), or unknown id.
     this.#pending.delete(msg.id);
+    if (this.#pending.size === 0 && !this.#keepAlive) this.#worker.unref();
     if (msg.ok) {
       pending.resolve(msg.value);
     } else {
@@ -161,8 +172,11 @@ export class NativeEngine {
   }
 
   #rejectAllPending(err: Error): void {
+    const hadPending = this.#pending.size > 0;
     for (const pending of this.#pending.values()) pending.reject(err);
     this.#pending.clear();
+    // Drop the in-flight ref the drained calls were holding (a no-op on a terminated worker).
+    if (hadPending && !this.#keepAlive) this.#worker.unref();
   }
 
   #unregisterExitHandler(): void {
@@ -178,8 +192,19 @@ export class NativeEngine {
     }
     const id = this.#nextId++;
     return new Promise<T>((resolve, reject) => {
+      // 0→1 transition holds the event loop for the duration of the in-flight window (#70): a bare
+      // script awaiting this call must not have Node drain the loop and exit with it unsettled.
+      if (this.#pending.size === 0 && !this.#keepAlive) this.#worker.ref();
       this.#pending.set(id, { fn, resolve: resolve as (v: unknown) => void, reject });
-      this.#worker.postMessage({ type: 'call', id, fn, args } satisfies ToWorkerMessage);
+      try {
+        this.#worker.postMessage({ type: 'call', id, fn, args } satisfies ToWorkerMessage);
+      } catch (err) {
+        // A main-side postMessage throw (e.g. DataCloneError) never reaches the worker, so no
+        // response will ever drain this entry — undo the bookkeeping or the ref leaks forever.
+        this.#pending.delete(id);
+        if (this.#pending.size === 0 && !this.#keepAlive) this.#worker.unref();
+        throw err;
+      }
     });
   }
 
