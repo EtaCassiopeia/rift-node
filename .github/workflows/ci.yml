@@ -162,3 +162,146 @@ jobs:
         run: npm run test:embedded
         env:
           RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
+
+  # ── Debug-only lane for #53 (embedded FFI segfault) ──────────────────────────────────────────
+  # NOT a gate and NOT part of normal CI: runs ONLY on a manual `workflow_dispatch` or when a commit
+  # message carries the `[ffi-debug]` marker (the `if:` below). It deliberately drives the crashing
+  # embedded FFI flow under core-dump capture to turn the bare "Segmentation fault" line into an
+  # actual native backtrace. Two modes per OS:
+  #   asis    — the shipped decode + rift_free discipline.
+  #   no-free — every `rift_free` CALL in native-call.ts no-op'd via an in-CI patch (leaks by design):
+  #             the H2 ownership experiment. If the segfault DISAPPEARS with frees disabled, the crash
+  #             is a free of a library-owned char* buffer (native-call.ts:78,128) — a fixable SDK bug.
+  # Artifacts (native backtrace, test log, node report, macOS .ips crash report, gzipped core) are
+  # uploaded for offline analysis. `continue-on-error` so a crash never fails the workflow — the crash
+  # is the point.
+  embedded-segfault-debug:
+    name: ffi segfault debug (${{ matrix.os }} · ${{ matrix.mode }})
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[ffi-debug]')
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        mode: [asis, no-free]
+    env:
+      RIFT_CACHE_DIR: ${{ github.workspace }}/.rift-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # H2 diagnostic: no-op every rift_free CALL in native-call.ts before building. `void (ptr)` still
+      # evaluates the argument but never frees. Only ever runs in this debug lane's no-free mode.
+      - name: Patch out rift_free (no-free mode only)
+        if: matrix.mode == 'no-free'
+        run: |
+          perl -pi -e 's/binding\.rift_free\(/void (/g' src/embedded/native-call.ts
+          echo "----- patched native-call.ts rift_free call sites -----"
+          grep -n "rift_free\|void (" src/embedded/native-call.ts || true
+
+      - name: Build
+        run: npm run build
+
+      - name: Cache librift_ffi cdylib
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.RIFT_CACHE_DIR }}
+          key: rift-ffi-${{ matrix.os }}-${{ hashFiles('package.json') }}
+
+      # Fetch is REQUIRED here (unlike the conformance lane): a debug run that self-skips the FFI is
+      # pointless, so a failed fetch should fail loudly rather than silently skip.
+      - name: Fetch librift_ffi cdylib
+        id: fetch-lib
+        run: |
+          lib="$(npx rift-fetch --lib)"
+          echo "lib_path=$lib" >> "$GITHUB_OUTPUT"
+          test -f "$lib" || { echo "::error::cdylib fetch produced no file ($lib)"; exit 1; }
+
+      - name: Enable core dumps + install gdb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gdb
+          mkdir -p "$GITHUB_WORKSPACE/cores"
+          chmod 1777 "$GITHUB_WORKSPACE/cores"
+          echo "$GITHUB_WORKSPACE/cores/core.%e.%p" | sudo tee /proc/sys/kernel/core_pattern
+          echo 1 | sudo tee /proc/sys/fs/suid_dumpable
+
+      - name: Enable core dumps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          sudo sysctl -w kern.coredump=1 || true
+          sudo mkdir -p /cores
+          sudo chmod 1777 /cores
+
+      - name: Run embedded suite under core-dump capture
+        id: repro
+        shell: bash
+        env:
+          RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
+          NODE_OPTIONS: --report-on-fatalerror --report-directory=${{ github.workspace }}/node-reports
+        run: |
+          ulimit -c unlimited
+          mkdir -p "$GITHUB_WORKSPACE/node-reports"
+          set +e
+          npm run test:embedded 2>&1 | tee test-output.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "test:embedded exit code = $code (139 = SIGSEGV, 134 = SIGABRT)"
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Extract native backtrace (Linux / gdb)
+        if: always() && runner.os == 'Linux'
+        run: |
+          shopt -s nullglob
+          cores=( "$GITHUB_WORKSPACE"/cores/core.* )
+          core="${cores[0]:-}"
+          if [ -n "$core" ]; then
+            echo "core: $core"
+            gdb -batch -q -ex "thread apply all bt" -ex "info sharedlibrary" -ex "quit" \
+              "$(command -v node)" "$core" | tee backtrace.txt
+            gzip -f "$core" || true
+          else
+            echo "no core file under cores/ (exit=${{ steps.repro.outputs.exit_code }}); no crash or core disabled" | tee backtrace.txt
+          fi
+
+      - name: Extract native backtrace (macOS / lldb + crash report)
+        if: always() && runner.os == 'macOS'
+        run: |
+          mkdir -p macos-crashlogs
+          cp -f ~/Library/Logs/DiagnosticReports/*.ips macos-crashlogs/ 2>/dev/null || true
+          cp -f ~/Library/Logs/DiagnosticReports/*.crash macos-crashlogs/ 2>/dev/null || true
+          shopt -s nullglob
+          cores=( /cores/core.* )
+          core="${cores[0]:-}"
+          if [ -n "$core" ]; then
+            echo "core: $core"
+            lldb --batch -c "$core" "$(command -v node)" -o "thread backtrace all" -o "image list" -o "quit" | tee backtrace.txt
+            mkdir -p "$GITHUB_WORKSPACE/cores"
+            gzip -c "$core" > "$GITHUB_WORKSPACE/cores/$(basename "$core").gz" || true
+          else
+            echo "no core in /cores (exit=${{ steps.repro.outputs.exit_code }}); rely on macos-crashlogs/*.ips for the symbolicated backtrace" | tee backtrace.txt
+          fi
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffi-segfault-${{ matrix.os }}-${{ matrix.mode }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            backtrace.txt
+            test-output.log
+            node-reports/
+            macos-crashlogs/
+            cores/
