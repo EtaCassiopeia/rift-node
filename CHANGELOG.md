@@ -7,6 +7,19 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **Docs that don't rot** (issue #14): the README is restructured around a hero quick-start +
+  per-transport quick starts (`rift.embedded()`/`rift.spawn()`/`rift.connect()`/Mountebank-compat
+  `create()`), a feature-tour table, and the real (grepped, not guessed) env var reference. New
+  `docs/migration.md` is a complete Mountebank-JSON-to-typed-DSL side-by-side (every predicate
+  operator, behavior, fault, proxy option, script kind, and scenario concept), plus escape hatches
+  (`fromJson`, `.raw()`, `wire.*`) and what Rift intentionally doesn't support. New
+  `docs/monorepo-migration.md` documents the package's move to this repo. The anti-rot mechanism:
+  every fenced snippet tagged `<!-- docs:embed <anchor> -->` in README.md/docs/*.md is generated
+  FROM a compiled `examples/*.ts` file (never hand-copied) — `scripts/check-docs-embeds.mjs`
+  (`npm run docs:check`) extracts each marked region, normalizes both sides, and fails naming the
+  anchor on any mismatch; `tsconfig.examples.json` (`npm run typecheck:examples`) keeps every
+  example compiling against the real, current exported API. Both run in a new CI `docs` job.
+
 - **Test-framework glue** (`@rift-vs/rift/testkit/vitest`, `@rift-vs/rift/testkit/jest`): a per-worker
   engine + per-test imposter auto-teardown. Vitest gets `riftTest`/`createRiftTest` fixtures; Jest gets
   `setupRift` (beforeAll/afterEach/afterAll helpers). Both re-export `assertReceived(imposter, match,
