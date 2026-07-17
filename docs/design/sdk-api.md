@@ -1,37 +1,42 @@
-# rift-node SDK — Complete API Design
+# rift-node SDK — API Reference
 
-Status: **approved for issue filing** · elaborates RFC-003 §12 (Node/TS amendment) · 2026-07-09
+Status: **canonical reference** · matches the shipped surface of `@rift-vs/rift` 0.12.1
+(`minEngineVersion` 0.12.0) · elaborates RFC-003 §12 (Node/TS amendment) · reconciled 2026-07-16
 
-This document is the single source of truth for the `@rift-vs/rift` public API. It was produced
-from a full survey of: the Rift engine wire grammar and admin API (`rift-core`, `rift-http-proxy`,
-`docs/`), the `librift_ffi` C-ABI v2 (25 symbols, `crates/rift-ffi`), RFC-003 and its §12
-amendment, the landed rift-node code (PRs #16–#19), the sibling SDKs (rift-java merged DSL,
-rift-scala design), and prior art (WireMock, MSW, nock, Testcontainers, Playwright/Vitest
-fixtures). Every implementation issue carries the slice of this design it delivers; this doc holds
-the cross-cutting decisions and the full grammar reference.
+This document is the single source of truth for the `@rift-vs/rift` public API: the cross-cutting
+decisions and the full grammar reference. It began as the 2026-07-09 design, produced from a full
+survey of the Rift engine wire grammar and admin API (`rift-core`, `rift-http-proxy`, `docs/`),
+the `librift_ffi` C-ABI v2 (26 symbols, `crates/rift-ffi`), RFC-003 and its §12 amendment, the
+sibling SDKs (rift-java merged DSL, rift-scala design), and prior art (WireMock, MSW, nock,
+Testcontainers, Playwright/Vitest fixtures). Every slice of that design has since shipped — §12
+holds the delivered ledger — and the text below describes what the SDK does. Deviations from the
+original design are called out inline with their tracking issue. README and `docs/*.md` are
+task-shaped quick starts; this file is the reference.
 
-## 0. Reading example (the target DX)
+Runnable snippets in this file are embed-checked against `examples/*.ts` by `npm run docs:check`
+(the `<!-- docs:embed -->` convention from #14); fences showing type signatures or elided sketches
+are reference material and carry no marker.
 
+## 0. Reading example (the shipped DX)
+
+<!-- docs:embed sdk-api-hero -->
 ```ts
-import {
-  rift, imposter, onGet, onPost, okJson, created, status,
-  contains, times, Fault,
-} from '@rift-vs/rift';
+import { rift, imposter, onGet, onPost, okJson, created, status, contains, times, Fault } from '@rift-vs/rift';
 
-await using engine = await rift.embedded();            // or rift.connect(url) / rift.spawn()
+await using engine = await rift.embedded(); // or rift.connect(url) / rift.spawn()
 
 const users = await engine.create(
   imposter('users').record()
-    .stub(onGet('/api/users/:id').willReturn(okJson({ id: 1, name: 'Alice' })))
+    .stub(onGet('/api/users/1').willReturn(okJson({ id: 1, name: 'Alice' })))
     .stub(onPost('/api/users')
       .withHeader('content-type', contains('json'))
       .willReturn(created().latency(50), status(503))) // two responses = cycling
     .stub(onGet('/api/health').willReturn(okJson({ ok: true }).withFault(
       Fault.latency({ min: 100, max: 500 }, { probability: 0.3 })))));
 
-await callSut(users.url);
+await fetch(`${users.url}/api/users/1`);
 
-await users.verify(onGet('/api/users/1'), times(1));   // throws VerificationError with a diff
+await users.verify(onGet('/api/users/1'), times(1)); // throws VerificationError with a diff
 ```
 
 ## 1. Principles
@@ -52,40 +57,46 @@ await users.verify(onGet('/api/users/1'), times(1));   // throws VerificationErr
    diff; startup failures carry engine stderr; native-library failures name the exact file,
    version, and fix.
 
-## 2. Packaging and module format (decision)
+## 2. Packaging and module format
 
-- **ESM-only**, Node ≥ 20. No CJS build. Rationale: zero-dep + global `fetch` + `worker_threads`
-  + `await using` all target modern Node; both testkit targets are ESM-native. CJS consumers use
-  dynamic `import()`. This is now an explicit decision, not an accident of the build.
-- `package.json` exports (note `types` **first** in each condition block — the current map has it
-  second, which is wrong per TS docs):
+- **ESM-only**, Node ≥ 20. No CJS build. Rationale: zero-dep core + global `fetch` +
+  `worker_threads` + `await using` all target modern Node; both testkit targets are ESM-native.
+  CJS consumers use dynamic `import()`.
+- **Single package** — this is the biggest divergence from the original design, which specified a
+  separate `@rift-vs/rift-embedded` package. The embedded transport shipped inside
+  `@rift-vs/rift` instead: the worker and FFI binding live in `src/embedded/`, exposed via the
+  `./embedded` subpath export, with `koffi` as an `optionalDependency` dynamically imported only
+  inside the worker. The package split is deferred — **#39** tracks it and the trigger conditions
+  for doing it. A vestigial optional `@rift-vs/rift-embedded` peer entry remains in
+  `package.json` from that design, and the testkit's transport auto-detect still probes it first,
+  so the split — if it lands — is adopted transparently.
+- `package.json` exports as shipped (`types` first in each condition block — the types-second
+  ordering the original design flagged was fixed by #25):
 
 ```jsonc
 {
   "name": "@rift-vs/rift",
   "type": "module",
   "exports": {
-    ".":                { "types": "./dist/index.d.ts",           "import": "./dist/index.js" },
-    "./compat":         { "types": "./dist/compat/index.d.ts",    "import": "./dist/compat/index.js" },
-    "./testkit/vitest": { "types": "./dist/testkit/vitest.d.ts",  "import": "./dist/testkit/vitest.js" },
-    "./testkit/jest":   { "types": "./dist/testkit/jest.d.ts",    "import": "./dist/testkit/jest.js" },
-    "./intercept-undici": { "types": "./dist/intercept-undici.d.ts", "import": "./dist/intercept-undici.js" }
+    ".":                  { "types": "./dist/index.d.ts",             "import": "./dist/index.js" },
+    "./compat":           { "types": "./dist/compat/index.d.ts",      "import": "./dist/compat/index.js" },
+    "./testkit/vitest":   { "types": "./dist/testkit/vitest.d.ts",    "import": "./dist/testkit/vitest.js" },
+    "./testkit/jest":     { "types": "./dist/testkit/jest.d.ts",      "import": "./dist/testkit/jest.js" },
+    "./intercept-undici": { "types": "./dist/intercept-undici.d.ts",  "import": "./dist/intercept-undici.js" },
+    "./embedded":         { "types": "./dist/embedded/index.d.ts",    "import": "./dist/embedded/index.js" }
   },
+  "optionalDependencies": { "koffi": "^2.9.0" },
   "peerDependencies": { "undici": ">=6", "vitest": ">=1", "@rift-vs/rift-embedded": "*" },
   "peerDependenciesMeta": {
     "undici": { "optional": true }, "vitest": { "optional": true },
-    "@rift-vs/rift-embedded": { "optional": true }
+    "@rift-vs/rift-embedded": { "optional": true }  // vestigial — see #39
   }
 }
 ```
 
-- `@rift-vs/rift-embedded` is a separate package holding the koffi dependency and the worker; the
-  core package dynamic-imports it from `rift.embedded()` and throws
-  `EngineUnavailable('embedded transport requires @rift-vs/rift-embedded — npm i -D @rift-vs/rift-embedded')`
-  if absent.
-- **Root export hygiene** (breaking, pre-publish so free): the legacy weak types
+- **Root export hygiene** (shipped in #25, breaking but pre-publish): the legacy weak types
   (`Predicate`/`Response`/`Stub`/`Imposter`/`ImposterConfig`/`ServerInfo` from `src/types.ts`)
-  leave the root — root names must belong to the DSL + wire model. The Mountebank-compat surface
+  left the root — root names belong to the DSL + wire model. The Mountebank-compat surface
   (`create`, `CreateOptions`, `RiftServer`, default export `{ create }`) stays at the root (it is
   a permanent product surface) and is also importable from `./compat`.
 
@@ -108,7 +119,7 @@ interface ConnectOptions {
 }
 ```
 
-`connect` becomes async (it performs the version preflight). All three return the same
+`connect` is async (it performs the version preflight). All three return the same
 `RiftEngine` interface — transports differ only in acquisition options.
 
 ### 3.2 `RiftEngine`
@@ -156,6 +167,8 @@ interface ImposterHandle extends AsyncDisposable {
   recorded(filter?: RecordedFilter): Promise<RecordedRequest[]>;
   clearRecorded(): Promise<void>;
   verify(match: RequestMatch, count?: CountMatcher): Promise<void>;  // default atLeast(1)
+  requests(opts?: { pollIntervalMs?: number; signal?: AbortSignal; match?: RequestMatch }):
+    AsyncIterableIterator<RecordedRequest>;  // live iteration, polling-based (#26; SSE when rift#461 lands)
 
   // scenarios (§5.8)
   scenarios(flowId?: string): Promise<Array<{ name: string; state: string }>>;
@@ -182,7 +195,7 @@ interface SpaceHandle {
   readonly flowId: string;
   addStub(stub: StubBuilder | wire.Stub): Promise<void>;   // POST spaces/{flowId}/stubs
   stubs(): Promise<wire.Stub[]>;
-  recorded(): Promise<RecordedRequest[]>;
+  recorded(match?: RequestMatch): Promise<RecordedRequest[]>;
   verify(match: RequestMatch, count?: CountMatcher): Promise<void>;
   scenarios(): Promise<Array<{ name: string; state: string }>>;
   setScenarioState(name: string, state: string): Promise<void>;
@@ -208,13 +221,13 @@ wire model + DSL                      — pure data
 ```
 
 `RiftEngine`/handles are implemented **once** over the `AdminApi` interface; transports provide
-`AdminApi` implementations. This kills the current split where spawn returns `{url, port, client}`
-and remote returns a bare client.
+`AdminApi` implementations. This replaced the pre-M7 split where spawn returned `{url, port,
+client}` and remote returned a bare client (#21).
 
 ### 3.5 `AdminApi` (escape hatch, total wire-level surface)
 
-Today's `RemoteClient` grows to cover the full admin route table and becomes the interface both
-transports implement: imposter CRUD (`?replayable`/`removeProxies`), stub CRUD by index and by id,
+`RemoteClient` covers the full admin route table, and `AdminApi` is the interface every
+transport implements: imposter CRUD (`?replayable`/`removeProxies`), stub CRUD by index and by id,
 `savedRequests` get/delete with `match=` filters, `savedProxyResponses` delete, enable/disable,
 scenarios get/put/reset, spaces, flow-state KV, `config`/`logs`/`metrics`, `reload`. Exact
 signatures are in issue #15 (client API).
@@ -229,7 +242,6 @@ class EngineError extends RiftError              // other engine failure; .code
 class EngineUnavailable extends RiftError        // spawn/connect/load failure; .cause
 class CommunicationError extends RiftError       // transport-level (HTTP/FFI)
 class WireValidationError extends RiftError      // fromJson shape errors; .path
-// new:
 class VerificationError extends RiftError        // verify() miss; .expected .count .recorded .closest
 class UnsupportedPredicateError extends RiftError// client-side verify hit xpath/inject
 class EngineVersionError extends RiftError       // preflight: engine < minEngineVersion; .found .required
@@ -238,7 +250,7 @@ class InterceptUnavailable extends RiftError     // intercept not started/starta
 ```
 
 All SDK-thrown errors are `RiftError` subclasses (the compat `create()` keeps its historical plain
-`Error`s). `WireValidationError` is re-parented under `RiftError` (currently standalone).
+`Error`s). `WireValidationError` sits under `RiftError` like the rest (re-parented in #25).
 
 ## 5. DSL — full grammar
 
@@ -256,7 +268,10 @@ stub-level `routePattern` (param extraction for templates/scripts — Rift's `ro
 extraction-only, it never matches) AND a derived anchored regex path predicate
 (`{ matches: { path: "^/users/[^/]+$" } }`). Opt out with `{ params: false }` to treat `:` as a
 literal. Param names are captured at the type level (`StubBuilder<{ id: string }>`) for editor
-hints; purely compile-time.
+hints; purely compile-time. **Known gap**: the param-typed builder does not currently compose —
+consuming positions (`imposter().stub()`, `verify()`, `scenario().when()`) accept only the bare
+`StubBuilder`, so passing a param-typed one is a compile error; tracked as **#47**. The wire
+output (`routePattern` + derived regex predicate) is unaffected.
 
 ### 5.2 Matchers (field-agnostic, bind via `with*` or field binders)
 
@@ -275,8 +290,8 @@ interface Matcher {
 }
 ```
 
-This replaces the current field-first free functions (`equals('path', v)`) — breaking but
-unpublished. A bare `string`/`object` anywhere a `Matcher` is accepted means `equals`.
+This replaced the pre-M7 field-first free functions (`equals('path', v)`) — breaking but
+pre-publish (#22). A bare `string`/`object` anywhere a `Matcher` is accepted means `equals`.
 
 ### 5.3 Predicates (composition) and stub refinement
 
@@ -313,9 +328,8 @@ interface StubBuilder<P = {}> {
 }
 ```
 
-**Semantics fix**: `willReturn` now **appends** on repeated calls (rift-java parity) — it currently
-replaces while `when` accumulates. `respond` stays as an alias. Never name anything `then` (builders
-must not be thenables).
+**Semantics**: `willReturn` **appends** on repeated calls (rift-java parity; shipped in #22).
+`respond` is an alias. Nothing is named `then` (builders must not be thenables).
 
 ### 5.4 Response builders
 
@@ -366,6 +380,11 @@ interface LookupSpec {
 }
 ```
 
+`latency()` deliberately never emits the Mountebank-documented `wait: { inject: ... }` random-delay
+form — the engine's `WaitBehavior` parser rejects it (#23 design decision). Random delay in a range
+uses `{ min, max }`; full JS control uses the fn-source string. `wait: { inject }` stays
+`fromJson`-only (see `latency-testing.json` in the conformance corpus).
+
 ### 5.5 Faults
 
 ```ts
@@ -410,7 +429,8 @@ interface PredicateGenerator {
 }
 ```
 
-Fixes the current silent-drop bug where `proxyTo(...).latency(500)` discards the behavior.
+`ProxyBuilder` extends `ResponseBuilder`, so behavior chainers stay legal on a proxy response and
+are emitted — the pre-M7 silent drop of `proxyTo(...).latency(500)` is gone (#23).
 
 ### 5.7 Scripts
 
@@ -440,8 +460,13 @@ interface ScenarioBuilder {
 imposter('x').scenario(scenario('checkout').startingAt('Started')...)
 ```
 
-Fix: `when` snapshots (`build()`s) the stub immediately — later mutation of the passed builder no
-longer silently rewrites committed steps. `respond` becomes variadic (was single).
+`when` snapshots (`build()`s) the stub immediately — later mutation of the passed builder never
+rewrites committed steps. `respond` is variadic (cycling in-state). Both shipped in #24.
+
+**Grouping without an FSM (known gap)**: several corpus fixtures use a bare `scenarioName` on
+stubs with no required/new state — pure grouping/tagging. `StubBuilder` has no
+`scenarioName`/`inScenario` setter yet, so those stubs are `fromJson`/`.raw()`-only; tracked as
+**#36**.
 
 ### 5.9 Imposter builder
 
@@ -472,8 +497,8 @@ interface ImposterBuilder {
 }
 ```
 
-`defaultResponse` stops throwing on non-`is` builders at call time with a plain `Error`; it now
-throws `InvalidDefinition` and accepts a raw `wire.IsResponse`.
+`defaultResponse` throws `InvalidDefinition` on non-`is` builders at call time and accepts a raw
+`wire.IsResponse` (#24).
 
 ## 6. Verification
 
@@ -500,13 +525,15 @@ A `StubBuilder` used as a match contributes only its predicates (responses ignor
 
 ### 6.2 Client-side predicate evaluation
 
-Rift has no server-side verify endpoint (upstream enhancement filed), so `verify`/`recorded(filter)`
+Rift has no server-side verify endpoint yet (upstream: **rift#494**), so `verify`/`recorded(filter)`
 evaluate predicates in the SDK against recorded requests: `equals`, `deepEquals`, `contains`,
 `startsWith`, `endsWith`, `matches`, `exists`, `and`, `or`, `not`, honoring `caseSensitive`
 (default insensitive), `keyCaseSensitive`, `except`, plus a built-in `jsonpath` subset
 (dot + bracket + numeric index: `$.a.b[0].c`; filters/wildcards unsupported). `xpath` and `inject`
 predicates throw `UnsupportedPredicateError` naming the operator. Semantics mirror the engine
 (string coercion for query/header scalars, object-containment for `equals` on JSON bodies).
+Evaluator ergonomics follow-ups — field-name validation, typed regex errors, non-JSON-body
+diagnostics — are tracked in **#33**.
 
 ### 6.3 Failure rendering (`VerificationError`)
 
@@ -555,7 +582,8 @@ Per-transport availability (documented, typed):
   maps to `--intercept-port` (+ CA flags). `engine.intercept()` without it throws
   `InterceptUnavailable` with the fix in the message.
 - **remote** — attach-only: probes `GET /intercept/rules`; 404 → `InterceptUnavailable`
-  ("start the server with --intercept-port"). Upstream issue filed for runtime start parity.
+  ("start the server with --intercept-port"). Runtime start/status parity is upstream
+  **rift#493**.
 
 Trust helpers: `handle.env()` covers child-process SUTs; for in-process undici/fetch, the optional
 subpath `@rift-vs/rift/intercept-undici` (peer-dep `undici`) exports
@@ -565,7 +593,7 @@ subpath `@rift-vs/rift/intercept-undici` (peer-dep `undici`) exports
 
 ### 8.1 Remote / spawn
 
-Spawn extends today's implementation with first-class engine flags:
+Spawn exposes the engine's CLI flags as first-class options:
 
 ```ts
 interface SpawnOptions {
@@ -582,24 +610,31 @@ interface SpawnOptions {
 }
 ```
 
-`SpawnedEngine.close()` also closes its `AdminApi` client (fixes the current leak of a usable
-client against a dead process).
+`SpawnedEngine.close()` also closes its `AdminApi` client, so no usable client outlives a dead
+process.
 
 ### 8.2 Embedded
 
-- One dedicated `worker_threads` Worker owns the koffi handle. Protocol and per-symbol binding are
-  specified in issue #8. Every native call runs synchronously on the worker and is atomically
+- **Single-package layout** (§2): the worker, koffi binding, and FFI plumbing live in
+  `src/embedded/`, exposed via the `./embedded` subpath; the separate-package split is deferred
+  (#39).
+- One dedicated `worker_threads` Worker owns the koffi handle, binding the 26-symbol C-ABI v2
+  (shipped in #8). Every native call runs synchronously on the worker and is atomically
   paired with `rift_last_error()` on that thread (the ABI's error slot is per-OS-thread).
 - **FFI-first with lazy loopback bridge**: operations with FFI symbols use them; the admin
   long-tail (scenario get/set/reset, `savedRequests`/`savedProxyResponses` clear, enable/disable)
   routes through a lazily started in-process admin plane (`rift_serve_admin` on `127.0.0.1:0`,
-  random `apiKey`). Imposter **creation always goes through FFI** — this bypasses the admin
-  plane's `allowInjection: false` default, so script/inject stubs work embedded with no flag.
-  `list()`/`get()` are served from a local registry (port → submitted config) merged with
-  `rift_recorded` counts. Upstream issues filed to close the FFI gaps and retire the bridge.
+  random `apiKey`), started at most once. Imposter **creation always goes through FFI** — this
+  bypasses the admin plane's `allowInjection: false` default, so script/inject stubs work embedded
+  with no flag. `list()`/`get()` are served from a local registry (port → submitted config) merged
+  with `rift_recorded` counts. Upstream: **rift#491** (FFI admin long-tail symbols — retires the
+  bridge) and **rift#492** (`allowInjection` option on `rift_serve_admin`).
 - Preflight: `rift_build_info` missing symbol → `NativeLibraryError` ("ABI v1 library, need v2");
   version < `minEngineVersion` → `EngineVersionError` (or `console.warn` with
   `versionCheck: 'warn'`). `requireFeatures: ['javascript']` asserts compiled-in features.
+- CI caveat: the embedded conformance lane must run against the built `dist/` (the worker resolves
+  `./worker.js` relative to the compiled module) and is currently allowed-failure — **#44** tracks
+  promoting it to a required gate.
 
 ```ts
 interface EmbeddedOptions {
@@ -635,15 +670,35 @@ export function createRiftTest(opts?: {
 ```
 
 - `engine` is a **worker-scoped** fixture (one engine per Vitest worker — cheap for embedded and
-  spawn; this is the isolation decision: per-worker engine, not spaces. Spaces remain a documented
-  pattern for shared `connect` engines).
-- The test-scoped `engine` the test receives is a proxy that records every `create()`; created
-  imposters are disposed after each test (auto-teardown).
+  spawn). This is the isolation decision as shipped: **per-worker engine + per-test imposter
+  auto-teardown**, not spaces; spaces-isolation for a shared `connect` engine remains a documented
+  pattern, not automated.
+- The test-scoped `engine` the test receives is a proxy that records every `create()` and
+  `replaceAll()`; those imposters are disposed after each test (auto-teardown). `get()`
+  attachments are not auto-deleted.
+- Transport auto-detect: embedded when `koffi` (or the future `@rift-vs/rift-embedded`) resolves,
+  else spawn.
 - `assertReceived(imposter, match, count?)` re-exported = `imposter.verify` (shared renderer).
+
+Usage (runnable, embed-checked):
+
+<!-- docs:embed testkit-vitest -->
+```ts
+import { riftTest } from '@rift-vs/rift/testkit/vitest';
+import { imposter, onGet, okJson, times } from '@rift-vs/rift';
+
+riftTest('looks up user', async ({ engine }) => {
+  const users = await engine.create(imposter('users').record()
+    .stub(onGet('/api/users/1').willReturn(okJson({ id: 1 }))));  // auto-teardown
+  await fetch(`${users.url}/api/users/1`);
+  await users.verify(onGet('/api/users/1'), times(1));
+});
+```
 
 ### Jest (`@rift-vs/rift/testkit/jest`)
 
-Jest has no fixture system; ship explicit helpers (no custom environment — ESM-hostile):
+Jest has no fixture system; explicit helpers instead (no custom environment — ESM-hostile).
+Illustrative sketch (not runnable; the quick start in `docs/` has the full form):
 
 ```ts
 const rift = setupRift({ transport: 'spawn' });    // registers beforeAll/afterAll/afterEach
@@ -657,39 +712,65 @@ test('looks up user', async () => {
 
 `create(options)` / default export `{ create }` keep their exact contract (including
 accepted-but-ignored `redis`/`impostersRepository`, any-HTTP-response readiness poll, EventEmitter
-events, SIGTERM→SIGKILL close). Internals migrate to `fetch` + `spawn/resolve.ts` (axios and the
-duplicate `binary.ts` stack retire; `findBinary`/`downloadBinary`/`getBinaryVersion` stay as
-deprecated delegating wrappers).
+events, SIGTERM→SIGKILL close). Internals migrated to `fetch` + `spawn/resolve.ts` in #25: axios
+and the duplicate `binary.ts` stack retired; `findBinary`/`downloadBinary`/`getBinaryVersion`
+remain as deprecated delegating wrappers. Known follow-up: `create()`'s child-process `'error'`
+listener throws inside the emitter, crashing the host on spawn failure instead of rejecting —
+tracked as **#28**.
 
 ## 11. Conformance
 
-Corpus (rift#460) replay harness: for each fixture, `fromJson` → create over each transport →
-replay recorded interactions → byte-compare responses. **Expressibility gate**: every fixture name
-must have an entry in `test/conformance/dsl-coverage.ts` mapping it to a DSL reconstruction whose
-`build()` output deep-equals the fixture (modulo defaults); a missing/failing entry fails CI
-naming the gap. Details in issues #7/#13.
+Corpus replay harness (the corpus is published — rift v0.14.0 ships `sdk-conformance-*.tar.gz`,
+resolving the original rift#460 blocker): for each fixture, `fromJson` → create over each
+transport → replay recorded interactions → byte-compare responses. **Expressibility gate**: every
+fixture name must have an entry in `test/conformance/dsl-coverage.ts` mapping it to a DSL
+reconstruction whose `build()` output deep-equals the fixture (modulo defaults); a missing/failing
+entry fails CI naming the gap. Details in issues #7/#13. Remote + spawn lanes are required; the
+embedded lane is allowed-failure until **#44** (run against built `dist/`) promotes it.
 
-## 12. Issue map
+## 12. Issue map — delivered ledger
 
-| Issue | Delivers |
+Every slice of the original design has shipped:
+
+| Issue | Delivered | PR |
+|---|---|---|
+| #21 | §3 engine facade + handles + AdminApi completion (M7) | #29 |
+| #22 | §5.1–5.3 matcher/predicate grammar (M7) | #30 |
+| #23 | §5.4–5.7 responses/behaviors/faults/scripts/proxy (M7) | #31 |
+| #24 | §5.8–5.9 imposter/stub/scenario completion (M7) | #32 |
+| #25 | §2/§10 export hygiene + legacy retirement (M7) | #27 |
+| #6 | §6 verification (M7) | #34 |
+| #26 | §3.3/§6 recorded-request async iteration (polling; SSE when rift#461 lands) | #35 |
+| #7 | §11 conformance harness, remote + spawn lanes (M7) | #37 |
+| #9 | §8.3 natives resolution (M8) | #38 |
+| #8 | §8.2 koffi worker binding (M8) | #40 |
+| #10 | §8.2 `rift.embedded()` wiring + preflight (M8) | #41 |
+| #11 | §7 intercept (M8) | #42 |
+| #13 | §11 corpus green over embedded (M8) | #43 |
+| #12 | §9 testkit (M8) | #45 |
+| #14 | docs quick starts + migration guide (M8) | #46 |
+
+Historical implementation order: #25 → #21 → #22/#23/#24 → #6 → #7 ‖ #8/#9 → #10 → #11/#12 →
+#13 → #14.
+
+Open follow-ups (this repo):
+
+| Issue | Tracks |
 |---|---|
-| #21 | §3 engine facade + handles + AdminApi completion (M7) |
-| #22 | §5.1–5.3 matcher/predicate grammar (M7) |
-| #23 | §5.4–5.7 responses/behaviors/faults/scripts/proxy (M7) |
-| #24 | §5.8–5.9 imposter/stub/scenario completion (M7) |
-| #25 | §2/§10 export hygiene + legacy retirement (M7) |
-| #6 | §6 verification (M7) |
-| #7, #13 | §11 conformance (M7/M8) |
-| #8 | §8.2 koffi worker binding (M8) |
-| #9 | §8.3 natives resolution (M8) |
-| #10 | §8.2 `rift.embedded()` wiring + preflight (M8) |
-| #11 | §7 intercept (M8) |
-| #12 | §9 testkit (M8) |
-| #14 | docs (M8) |
-| #26 | recorded-request async iteration, backlog (polling → SSE when rift#461 lands) |
-| rift#491 | upstream: FFI admin long-tail symbols (retires #10's loopback bridge) |
-| rift#492 | upstream: `allowInjection` option on `rift_serve_admin` |
-| rift#493 | upstream: runtime intercept lifecycle endpoints |
-| rift#494 | upstream: server-side verification endpoint (full-fidelity `verify`) |
+| #28 | §10 — compat `create()` spawn-failure `'error'` listener crashes the host |
+| #33 | §6.2 — evaluator ergonomics (field-name validation, typed regex errors, body diagnostics) |
+| #36 | §5.8 — stub-level `scenarioName` grouping builder (no-FSM tagging) |
+| #39 | §2 — `@rift-vs/rift-embedded` package split (deferred; trigger conditions in the issue) |
+| #44 | §8.2/§11 — embedded conformance lane against built `dist/` → required M8 gate |
+| #47 | §5.1 — param-typed `StubBuilder` does not compose into consuming positions |
 
-Suggested implementation order: #25 → #21 → #22/#23/#24 (parallel) → #6 → #7 ‖ #8/#9 → #10 → #11/#12 → #13 → #14.
+Open upstream (rift engine):
+
+| Issue | Tracks |
+|---|---|
+| rift#461 | SSE recorded-request stream (upgrades #26's polling `requests()`) |
+| rift#473 | docs redirect for the relocated quick starts |
+| rift#491 | FFI admin long-tail symbols (retires §8.2's loopback bridge) |
+| rift#492 | `allowInjection` option on `rift_serve_admin` |
+| rift#493 | runtime intercept lifecycle endpoints (§7 remote parity) |
+| rift#494 | server-side verification endpoint (full-fidelity §6 `verify`) |
