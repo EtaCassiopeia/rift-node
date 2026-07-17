@@ -727,3 +727,85 @@ describe('predicatesOf — responses are genuinely ignored', () => {
     expect(predicatesOf(stub)).toEqual(stub.build().predicates); // yet only predicates lifted
   });
 });
+
+describe('issue #33 — evaluator ergonomics (fail-closed boundary, no verdict changes)', () => {
+  it('AC1: exists with an unknown field name throws UnsupportedPredicateError naming it', () => {
+    expect(() => evalPredicates([{ exists: { pathh: true } }], rr())).toThrow(UnsupportedPredicateError);
+    expect(() => evalPredicates([{ exists: { pathh: true } }], rr())).toThrow(/pathh/);
+  });
+
+  it('AC1: an operator FieldMatch with an unknown field name throws UnsupportedPredicateError naming it', () => {
+    expect(() => evalPredicates([{ equals: { fielddd: 'x' } }], rr())).toThrow(UnsupportedPredicateError);
+    expect(() => evalPredicates([{ equals: { fielddd: 'x' } }], rr())).toThrow(/fielddd/);
+  });
+
+  it('AC1: known fields still evaluate (headers/query per-key expansion unaffected)', () => {
+    const req = rr({ headers: { accept: 'application/json' }, query: { page: '2' } });
+    expect(evalPredicates([{ equals: { headers: { accept: 'application/json' } } }], req)).toBe(true);
+    expect(evalPredicates([{ equals: { query: { page: '2' } } }], req)).toBe(true);
+  });
+
+  it('AC2: a jsonpath predicate against a raw-string body is a non-match with a "body is not JSON" note', () => {
+    const req = rr({ body: 'plain text, not json' });
+    const preds: Predicate[] = [{ equals: { body: 1 }, jsonpath: { selector: '$.id' } }];
+    expect(evalPredicates(preds, req)).toBe(false); // fail-closed verdict unchanged
+    const leaves = collectLeafDetails(preds, req);
+    expect(leaves).toHaveLength(1);
+    expect(leaves[0].note).toBe('body is not JSON');
+  });
+
+  it('AC2: an object-equals predicate against a raw-string body carries the note too', () => {
+    const req = rr({ body: 'oops' });
+    const leaves = collectLeafDetails([{ equals: { body: { id: 1 } } }], req);
+    expect(leaves[0].passed).toBe(false);
+    expect(leaves[0].note).toBe('body is not JSON');
+  });
+
+  it('AC2: the closest-non-match renderer surfaces the note instead of "(absent)"', () => {
+    const predicates: Predicate[] = [{ equals: { body: { id: 1 } }, jsonpath: { selector: '$.id' } }];
+    const recorded = [rr({ body: 'raw string body', timestamp: '2026-07-09T10:12:03Z' })];
+    const closest = computeClosest(predicates, recorded);
+    const err = new VerificationError('Verification failed for imposter "users" (port 55123)', {
+      expected: predicates,
+      count: { matched: 0, total: recorded.length, matcher: times(1) },
+      recorded,
+      closest,
+    });
+    const rendered = renderVerificationFailure(err);
+    expect(rendered).toContain('(body is not JSON)');
+    expect(rendered).not.toContain('(absent)');
+  });
+
+  it('AC2: a parsed-JSON body does NOT carry the note', () => {
+    const req = rr({ body: { id: 1 } });
+    const leaves = collectLeafDetails([{ equals: { body: { id: 1 } } }], req);
+    expect(leaves[0].passed).toBe(true);
+    expect(leaves[0].note).toBeUndefined();
+  });
+
+  it('AC2: plain string-equals against a string body is an ordinary comparison — no note', () => {
+    const req = rr({ body: 'plain text' });
+    const leaves = collectLeafDetails([{ equals: { body: 'plain text' } }], req);
+    expect(leaves[0].passed).toBe(true);
+    expect(leaves[0].note).toBeUndefined();
+  });
+
+  it('AC1: an unknown field nested in not/and composition still throws', () => {
+    expect(() => evalPredicates([{ not: { equals: { fielddd: 'x' } } }], rr())).toThrow(UnsupportedPredicateError);
+    expect(() => evalPredicates([{ and: [{ exists: { pathh: true } }] }], rr())).toThrow(UnsupportedPredicateError);
+  });
+
+  it('AC3: an invalid regex in matches throws InvalidDefinition, not a raw SyntaxError', () => {
+    const req = rr({ path: '/x' });
+    expect(() => evalPredicates([{ matches: { path: '(' } }], req)).toThrow(rootExports.InvalidDefinition);
+    expect(() => evalPredicates([{ matches: { path: '(' } }], req)).toThrow(/matches/);
+  });
+
+  it('AC3: an invalid regex in except throws InvalidDefinition, not a raw SyntaxError', () => {
+    const req = rr({ path: '/x' });
+    expect(() => evalPredicates([{ equals: { path: '/x' }, except: '(' }], req)).toThrow(
+      rootExports.InvalidDefinition
+    );
+    expect(() => evalPredicates([{ equals: { path: '/x' }, except: '(' }], req)).toThrow(/except/);
+  });
+});

@@ -15,7 +15,7 @@
 
 import type { JsonValue, Predicate } from '../model/index.js';
 import type { RecordedRequest } from './index.js';
-import { UnsupportedPredicateError } from '../errors.js';
+import { InvalidDefinition, UnsupportedPredicateError } from '../errors.js';
 
 const KNOWN_OPERATORS = [
   'equals',
@@ -26,6 +26,19 @@ const KNOWN_OPERATORS = [
   'matches',
 ] as const;
 type KnownOperator = (typeof KNOWN_OPERATORS)[number];
+
+const KNOWN_FIELDS = new Set(['method', 'path', 'headers', 'query', 'body']);
+
+/** A field-name typo (`pathh`, `fielddd`, …) must fail loudly like an operator typo does — a
+ * silent non-match here would turn `verify()` into a false negative with nothing to diagnose. */
+function requireKnownField(field: string): void {
+  if (!KNOWN_FIELDS.has(field)) {
+    throw new UnsupportedPredicateError(
+      field,
+      `unknown request field "${field}" — expected method/path/headers/query/body`
+    );
+  }
+}
 
 const NON_OPERATOR_KEYS = new Set([
   'and',
@@ -56,6 +69,8 @@ export interface LeafDetail {
   passed: boolean;
   /** The minimal wire predicate fragment this leaf came from, for `VerificationError.closest`. */
   predicate: Predicate;
+  /** Extra diagnostic for the renderer (e.g. `body is not JSON`); never affects the verdict. */
+  note?: string;
 }
 
 // --- entry points ------------------------------------------------------------------------------
@@ -162,6 +177,7 @@ function evalLeafPredicate(pred: Predicate, request: RecordedRequest): { passed:
 
   if (pred.exists !== undefined) {
     const details = Object.entries(pred.exists).map(([field, expected]) => {
+      requireKnownField(field);
       const actual = fieldPresence(field, request);
       return leafDetail('exists', field, undefined, expected, actual, actual === expected);
     });
@@ -213,9 +229,18 @@ function evalField(
   request: RecordedRequest,
   params: MatchParams
 ): LeafDetail {
+  requireKnownField(field);
   const keyCaseSensitive = params.keyCaseSensitive ?? false;
   const rawActual = lookupActual(field, key, request, keyCaseSensitive);
   const actual = params.jsonpath !== undefined ? applyJsonPath(params.jsonpath.selector, rawActual as JsonValue | undefined) : rawActual;
+
+  // A raw-string body against a JSON-shaped predicate stays a non-match (fail-closed), but the
+  // diagnostic must say WHY — the default rendering (`(absent)` after a jsonpath miss) hides that
+  // the body simply wasn't recorded as JSON.
+  const jsonShaped =
+    params.jsonpath !== undefined ||
+    ((operator === 'equals' || operator === 'deepEquals') && isComposite(expected));
+  const note = field === 'body' && typeof rawActual === 'string' && jsonShaped ? 'body is not JSON' : undefined;
 
   let passed: boolean;
   if (field === 'body' && (operator === 'equals' || operator === 'deepEquals') && isComposite(expected) && params.jsonpath === undefined) {
@@ -225,7 +250,7 @@ function evalField(
   } else {
     passed = stringCompare(operator, toStr(actual as JsonValue | undefined), toStr(expected), params);
   }
-  return leafDetail(operator, field, key, expected, actual, passed);
+  return leafDetail(operator, field, key, expected, actual, passed, note);
 }
 
 function leafDetail(
@@ -234,11 +259,12 @@ function leafDetail(
   key: string | undefined,
   expected: JsonValue | boolean,
   actual: unknown,
-  passed: boolean
+  passed: boolean,
+  note?: string
 ): LeafDetail {
   const value = key !== undefined ? { [key]: expected } : expected;
   const predicate = { [operator]: { [field]: value } } as Predicate;
-  return { field, key, operator, expected, actual, passed, predicate };
+  return { field, key, operator, expected, actual, passed, predicate, note };
 }
 
 function fieldPresence(field: string, request: RecordedRequest): boolean {
@@ -337,15 +363,23 @@ function toStr(v: JsonValue | undefined): string {
   return JSON.stringify(v);
 }
 
+function compileRegex(pattern: string, flags: string, where: 'matches' | 'except'): RegExp {
+  try {
+    return new RegExp(pattern, flags);
+  } catch (err) {
+    throw new InvalidDefinition(`invalid regex in ${where}: ${(err as Error).message}`, { cause: err });
+  }
+}
+
 function applyExcept(s: string, except: string | undefined): string {
-  return except === undefined ? s : s.replace(new RegExp(except, 'g'), '');
+  return except === undefined ? s : s.replace(compileRegex(except, 'g', 'except'), '');
 }
 
 function stringCompare(operator: KnownOperator, actualRaw: string, expectedRaw: string, params: MatchParams): boolean {
   const actual = applyExcept(actualRaw, params.except);
   if (operator === 'matches') {
     const flags = params.caseSensitive === true ? '' : 'i';
-    return new RegExp(expectedRaw, flags).test(actual);
+    return compileRegex(expectedRaw, flags, 'matches').test(actual);
   }
   const caseSensitive = params.caseSensitive === true;
   const a = caseSensitive ? actual : actual.toLowerCase();
