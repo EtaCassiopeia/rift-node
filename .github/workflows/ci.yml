@@ -70,12 +70,10 @@ jobs:
   embedded-conformance:
     name: embedded conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Allowed-failure/tracking for now: once the cdylib fetch succeeds the embedded replay lane
-    # actually runs, but exercising the worker_threads worker from TS source under jest can't resolve
-    # the built worker (`src/embedded/worker.js` only exists as `dist/...` after build) — the harness
-    # needs to run against the built package. Tracked as a follow-up; the transport itself works from
-    # the published dist. Non-blocking until that lands, same discipline as the experimental windows lane.
-    continue-on-error: true
+    # Required M8 gate (issue #44): the lane runs against the BUILT package via
+    # jest.embedded.config.js (src imports remapped to dist), so worker_threads resolves the real
+    # dist/embedded/worker.js. When the cdylib fetch 404s the embedded describes self-skip and the
+    # job still proves the conformance gate against dist.
     strategy:
       fail-fast: false
       matrix:
@@ -105,19 +103,17 @@ jobs:
           path: ${{ env.RIFT_CACHE_DIR }}
           key: rift-ffi-${{ matrix.os }}-${{ hashFiles('package.json') }}
 
-      # Best-effort: no `sdk-conformance-<version>` corpus or published cdylib release exists yet
-      # (rift#460 / this issue's prerequisite), so this 404s today — `continue-on-error` lets the
-      # job finish green with `RIFT_FFI_LIB` unset, at which point the embedded conformance lane
-      # (test/conformance/replay.integration.test.ts's `describeEmbeddedOrSkip`) self-skips, same
-      # as it does locally without koffi. Once the cdylib ships, this step starts succeeding and
-      # the lane starts actually running, with no further CI change needed.
+      # Best-effort fetch of the published cdylib: on a transient failure (network, a classifier
+      # not yet published) `continue-on-error` leaves `RIFT_FFI_LIB` unset and the embedded
+      # describes (`describeEmbeddedOrSkip`) self-skip — the job still gates the conformance
+      # suite against dist. When the fetch succeeds the embedded replay lane actually runs.
       - name: Fetch librift_ffi cdylib
         id: fetch-lib
         continue-on-error: true
         run: echo "lib_path=$(npx rift-fetch --lib)" >> "$GITHUB_OUTPUT"
 
       - name: Conformance + embedded integration tests
-        run: npm test -- --testPathPattern="test/conformance"
+        run: npm run test:embedded
         env:
           RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}
 
@@ -160,6 +156,6 @@ jobs:
 
       - name: Conformance + embedded integration tests
         shell: bash
-        run: npm test -- --testPathPattern="test/conformance"
+        run: npm run test:embedded
         env:
           RIFT_FFI_LIB: ${{ steps.fetch-lib.outputs.lib_path }}

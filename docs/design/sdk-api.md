@@ -632,9 +632,10 @@ process.
 - Preflight: `rift_build_info` missing symbol → `NativeLibraryError` ("ABI v1 library, need v2");
   version < `minEngineVersion` → `EngineVersionError` (or `console.warn` with
   `versionCheck: 'warn'`). `requireFeatures: ['javascript']` asserts compiled-in features.
-- CI caveat: the embedded conformance lane must run against the built `dist/` (the worker resolves
-  `./worker.js` relative to the compiled module) and is currently allowed-failure — **#44** tracks
-  promoting it to a required gate.
+- CI: the embedded conformance lane runs against the built `dist/` (the worker resolves
+  `./worker.js` relative to the compiled module; `jest.embedded.config.js` remaps `src/` imports
+  to `dist/`) and is a required gate on linux + macos (**#44**). The Windows lane stays
+  experimental.
 
 ```ts
 interface EmbeddedOptions {
@@ -725,8 +726,9 @@ resolving the original rift#460 blocker): for each fixture, `fromJson` → creat
 transport → replay recorded interactions → byte-compare responses. **Expressibility gate**: every
 fixture name must have an entry in `test/conformance/dsl-coverage.ts` mapping it to a DSL
 reconstruction whose `build()` output deep-equals the fixture (modulo defaults); a missing/failing
-entry fails CI naming the gap. Details in issues #7/#13. Remote + spawn lanes are required; the
-embedded lane is allowed-failure until **#44** (run against built `dist/`) promotes it.
+entry fails CI naming the gap. Details in issues #7/#13. Remote + spawn + embedded (linux/macos)
+lanes are required — the embedded lane runs against the built `dist/` (**#44**); the Windows
+embedded lane stays experimental.
 
 ## 12. Issue map — delivered ledger
 
@@ -760,7 +762,6 @@ Open follow-ups (this repo):
 | #28 | §10 — compat `create()` spawn-failure `'error'` listener crashes the host |
 | #33 | §6.2 — evaluator ergonomics (field-name validation, typed regex errors, body diagnostics) |
 | #39 | §2 — `@rift-vs/rift-embedded` package split (deferred; trigger conditions in the issue) |
-| #44 | §8.2/§11 — embedded conformance lane against built `dist/` → required M8 gate |
 | #47 | §5.1 — param-typed `StubBuilder` does not compose into consuming positions |
 
 Open upstream (rift engine):
