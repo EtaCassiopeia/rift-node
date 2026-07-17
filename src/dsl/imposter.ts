@@ -14,7 +14,7 @@ import type { Imposter, IsResponse, JsonValue, RiftImposterConfig, Stub } from '
 import { InvalidDefinition } from '../errors.js';
 import { ResponseBuilder } from './response.js';
 import type { ScriptSpec } from './script.js';
-import type { StubBuilder } from './stub.js';
+import type { AnyStubBuilder } from './stub.js';
 import type { ScenarioBuilder } from './scenario.js';
 
 export interface FlowStateConfig {
@@ -161,7 +161,7 @@ export class ImposterBuilder {
     return this;
   }
 
-  stub(...stubs: StubBuilder[]): this {
+  stub(...stubs: AnyStubBuilder[]): this {
     for (const s of stubs) this.stubList.push(s.build());
     return this;
   }

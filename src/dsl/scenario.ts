@@ -4,7 +4,7 @@
  * `new_scenario_state`.
  *
  * `when()` builds and snapshots the stub's predicates immediately — mutating the passed-in
- * {@link StubBuilder} afterward (e.g. calling `.when()` on it again) does not change the
+ * {@link AnyStubBuilder} afterward (e.g. calling `.when()` on it again) does not change the
  * committed step. A step is committed to the step list when the next `.when()` starts (or at
  * `.build()`), so a terminal state with no `.goTo()` is not lost. Calling `.respond()`/`.goTo()`
  * with no open `.when()` throws rather than silently dropping work.
@@ -12,7 +12,7 @@
 
 import type { Predicate, Stub, StubResponse } from '../model/index.js';
 import { ResponseBuilder } from './response.js';
-import type { StubBuilder } from './stub.js';
+import type { AnyStubBuilder } from './stub.js';
 
 interface Step {
   state: string;
@@ -43,7 +43,7 @@ export class ScenarioBuilder {
     this.open = undefined;
   }
 
-  when(state: string, stubBuilder: StubBuilder): this {
+  when(state: string, stubBuilder: AnyStubBuilder): this {
     this.commitOpen();
     const built = stubBuilder.build();
     this.open = {
