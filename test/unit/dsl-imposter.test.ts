@@ -150,6 +150,13 @@ describe('DSL #24 — stub-level fields', () => {
     const s = onGet('/x').id('stub-1').inSpace('flow-9').routePattern('/x/:y').build();
     expect(s).toMatchObject({ id: 'stub-1', space: 'flow-9', route_pattern: '/x/:y' });
   });
+  it('inScenario emits a bare scenarioName with no FSM state keys (issue #36)', () => {
+    const s = onGet('/x').inScenario('Auth-Login').build();
+    expect(s.scenarioName).toBe('Auth-Login');
+    expect(s.required_scenario_state).toBeUndefined();
+    expect(s.new_scenario_state).toBeUndefined();
+    expect(onGet('/x').build().scenarioName).toBeUndefined();
+  });
   it('explicit routePattern() overrides the opener-derived :param pattern', () => {
     // onGet('/x/:id') auto-derives route_pattern '/x/:id'; the explicit override must win.
     expect(onGet('/x/:id').routePattern('/custom').build().route_pattern).toBe('/custom');

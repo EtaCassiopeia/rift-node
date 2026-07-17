@@ -320,6 +320,7 @@ interface StubBuilder<P = {}> {
   // stub-level fields
   id(id: string): this;                               // wire: id
   inSpace(flowId: string): this;                      // wire: space
+  inScenario(name: string): this;                     // wire: scenarioName (grouping only, no FSM)
   routePattern(pattern: string): this;                // explicit override
   // responses
   willReturn(...rs: Array<ResponseBuilder | wire.StubResponse>): this;  // APPENDS (cycling)
@@ -463,10 +464,9 @@ imposter('x').scenario(scenario('checkout').startingAt('Started')...)
 `when` snapshots (`build()`s) the stub immediately — later mutation of the passed builder never
 rewrites committed steps. `respond` is variadic (cycling in-state). Both shipped in #24.
 
-**Grouping without an FSM (known gap)**: several corpus fixtures use a bare `scenarioName` on
-stubs with no required/new state — pure grouping/tagging. `StubBuilder` has no
-`scenarioName`/`inScenario` setter yet, so those stubs are `fromJson`/`.raw()`-only; tracked as
-**#36**.
+**Grouping without an FSM**: a bare `scenarioName` on a stub (no required/new state — pure
+grouping/tagging) is set with `StubBuilder.inScenario(name)` (#36). The FSM-with-transitions path
+stays `scenario()`.
 
 ### 5.9 Imposter builder
 
@@ -759,7 +759,6 @@ Open follow-ups (this repo):
 |---|---|
 | #28 | §10 — compat `create()` spawn-failure `'error'` listener crashes the host |
 | #33 | §6.2 — evaluator ergonomics (field-name validation, typed regex errors, body diagnostics) |
-| #36 | §5.8 — stub-level `scenarioName` grouping builder (no-FSM tagging) |
 | #39 | §2 — `@rift-vs/rift-embedded` package split (deferred; trigger conditions in the issue) |
 | #44 | §8.2/§11 — embedded conformance lane against built `dist/` → required M8 gate |
 | #47 | §5.1 — param-typed `StubBuilder` does not compose into consuming positions |
