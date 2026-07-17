@@ -269,8 +269,11 @@ jobs:
           code=${PIPESTATUS[0]}
           set -e
           echo "test:embedded exit code = $code (139 = SIGSEGV, 134 = SIGABRT)"
-          echo "----- last native symbols traced before exit (culprit = last line) -----"
-          tail -n 15 "$GITHUB_WORKSPACE/ffi-trace.log" 2>/dev/null || echo "(no trace file — crash before first traced call, or tracing not reached)"
+          echo "----- last native steps traced before exit (culprit = last line) -----"
+          echo "[from stderr trace in test-output.log]"
+          grep -a '\[ffi-trace\]' test-output.log | tail -n 20 || echo "(no [ffi-trace] lines in output)"
+          echo "[from trace file]"
+          tail -n 20 "$GITHUB_WORKSPACE/ffi-trace.log" 2>/dev/null || echo "(no trace file)"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Extract native backtrace (Linux / gdb)
@@ -281,7 +284,20 @@ jobs:
           core="${cores[0]:-}"
           if [ -n "$core" ]; then
             echo "core: $core"
-            gdb -batch -q -ex "thread apply all bt" -ex "info sharedlibrary" -ex "quit" \
+            # Dump the faulting frame + registers + the memory the crashing instruction touched.
+            # For a strlen SIGSEGV the char* being walked is in $rdi (x86_64 SysV) — x/s shows whether
+            # it is an unmapped/garbage pointer or a valid-but-unterminated buffer.
+            gdb -batch -q \
+              -ex "bt" \
+              -ex "info registers rip rdi rsi rdx" \
+              -ex "x/2i \$rip" \
+              -ex "printf \"--- string at \$rdi: ---\n\"" \
+              -ex "x/s \$rdi" \
+              -ex "x/64bx \$rdi" \
+              -ex "bt full" \
+              -ex "thread apply all bt" \
+              -ex "info sharedlibrary" \
+              -ex "quit" \
               "$(command -v node)" "$core" | tee backtrace.txt
             gzip -f "$core" || true
           else
@@ -294,12 +310,19 @@ jobs:
           mkdir -p macos-crashlogs
           cp -f ~/Library/Logs/DiagnosticReports/*.ips macos-crashlogs/ 2>/dev/null || true
           cp -f ~/Library/Logs/DiagnosticReports/*.crash macos-crashlogs/ 2>/dev/null || true
+          # The OS-symbolicated crash report has the full faulting-thread stack (incl. the caller of
+          # strlen that the koffi trampoline hides from lldb). Print it inline so no download is needed.
+          echo "===== newest macOS crash report (.ips) ====="
           shopt -s nullglob
+          ips=( "$HOME"/Library/Logs/DiagnosticReports/*.ips )
+          if [ ${#ips[@]} -gt 0 ]; then cat "${ips[-1]}" | tee -a backtrace.txt; else echo "(no .ips crash report found)"; fi
           cores=( /cores/core.* )
           core="${cores[0]:-}"
           if [ -n "$core" ]; then
             echo "core: $core"
-            lldb --batch -c "$core" "$(command -v node)" -o "thread backtrace all" -o "image list" -o "quit" | tee backtrace.txt
+            lldb --batch -c "$core" "$(command -v node)" \
+              -o "thread backtrace all" -o "register read x0 x1 pc" \
+              -o "memory read --format s \$x0" -o "image list" -o "quit" | tee -a backtrace.txt
             mkdir -p "$GITHUB_WORKSPACE/cores"
             gzip -c "$core" > "$GITHUB_WORKSPACE/cores/$(basename "$core").gz" || true
           else

@@ -17,6 +17,8 @@ import type { WorkerNativeState } from './native-call.js';
 import type { FromWorkerMessage, ToWorkerMessage } from './protocol.js';
 import { traceFfi } from './debug-trace.js';
 
+traceFfi('worker:module-load');
+
 if (!parentPort) {
   throw new Error('src/embedded/worker.js must be run inside a worker_threads Worker');
 }
