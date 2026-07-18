@@ -136,11 +136,17 @@ async function assertExpectation(
 
 /**
  * Creates the fixture's imposter, replays every interaction against it in order, and deletes it
- * (even on failure). Explicit fixture ports are respected verbatim — `fromJson` never rewrites a
- * `port` field — and an unset port gets an engine-assigned one via `handle.url`.
+ * (even on failure). Every interaction is fetched via the created handle's `url`, so the fixture's
+ * `port` is incidental to behavioral replay — and binding it verbatim makes the lane collide with,
+ * and silently hit, any OTHER host process already serving that port (#72: a foreign listener
+ * answers the fetch with a confusing right-status/empty-body mismatch). So the explicit port is
+ * dropped here and the engine auto-assigns a free one. Port/wire fidelity is covered separately by
+ * the DSL-coverage gate (`dsl-coverage.ts`/`conformance.test.ts`), which round-trips the field.
  */
 export async function replayFixture(engine: RiftEngine, fixture: Fixture): Promise<void> {
-  const handle = await engine.create(fromJson<Imposter>(fixture.imposterJson));
+  const imposter = fromJson<Imposter>(fixture.imposterJson);
+  delete imposter.port;
+  const handle = await engine.create(imposter);
   try {
     for (const [index, step] of fixture.interactions.entries()) {
       const res = await fetch(buildUrl(handle.url, step.request), toFetchInit(step.request));
