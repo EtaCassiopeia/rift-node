@@ -50,10 +50,44 @@ const TARGET_MAP: Record<string, { target: string; ext: 'tar.gz' | 'zip' }> = {
   'win32-x64': { target: 'x86_64-pc-windows-msvc', ext: 'zip' },
 };
 
-/** Maps a (platform, arch) pair to its Rust release target. Defaults to the current process's. */
+/** Linux C library flavor. Only meaningful on `linux`; other platforms report `glibc` inertly. */
+export type Libc = 'glibc' | 'musl';
+
+/**
+ * Detects the running Linux C library (issue #84). Alpine and other musl distros need the
+ * `*-unknown-linux-musl` release asset — the glibc build won't run there without `gcompat`.
+ *
+ * Heuristic (fast, dependency-free): Node's report exposes `glibcVersionRuntime` only when linked
+ * against glibc; its absence on Linux means musl. `/etc/alpine-release` is a secondary signal.
+ * Non-Linux platforms always report `glibc` (the value is unused for them).
+ */
+export function detectLibc(platform: string = process.platform): Libc {
+  if (platform !== 'linux') return 'glibc';
+  // Only the host's own libc is knowable here. When a caller simulates a *different* platform
+  // (tests, cross-fetch for another target), we can't probe it — default to gnu and let callers
+  // pass `libc: 'musl'` explicitly for a cross-target musl build.
+  if (platform !== process.platform) return 'glibc';
+  try {
+    const report = process.report?.getReport?.() as
+      | { header?: { glibcVersionRuntime?: string } }
+      | undefined;
+    if (report?.header && 'glibcVersionRuntime' in report.header) {
+      return report.header.glibcVersionRuntime ? 'glibc' : 'musl';
+    }
+  } catch {
+    // fall through to the filesystem signal
+  }
+  return fs.existsSync('/etc/alpine-release') ? 'musl' : 'glibc';
+}
+
+/**
+ * Maps a (platform, arch) pair to its Rust release target. Defaults to the current process's.
+ * On Linux the C library flavor selects gnu vs musl (defaults to {@link detectLibc}).
+ */
 export function platformTarget(
   platform: string = process.platform,
-  arch: string = process.arch
+  arch: string = process.arch,
+  libc: Libc = detectLibc(platform)
 ): PlatformTarget {
   const key = `${platform}-${arch}`;
   const entry = TARGET_MAP[key];
@@ -62,7 +96,12 @@ export function platformTarget(
       `Unsupported platform/arch combination: ${key}. Supported: ${Object.keys(TARGET_MAP).join(', ')}`
     );
   }
-  const { target, ext } = entry;
+  // Linux ships both gnu and musl builds; select musl on musl hosts (Alpine) so the binary runs.
+  const target =
+    platform === 'linux' && libc === 'musl'
+      ? entry.target.replace('-linux-gnu', '-linux-musl')
+      : entry.target;
+  const { ext } = entry;
   return {
     target,
     ext,
@@ -77,6 +116,8 @@ export interface DownloadUrlOptions {
   mirror?: string;
   platform?: string;
   arch?: string;
+  /** Override the detected C library flavor (Linux gnu vs musl). Defaults to {@link detectLibc}. */
+  libc?: Libc;
 }
 
 /**
@@ -86,7 +127,7 @@ export interface DownloadUrlOptions {
 export function binaryDownloadUrl(version: string, opts: DownloadUrlOptions = {}): string {
   const env = opts.env ?? process.env;
   const base = opts.mirror ?? env.RIFT_DOWNLOAD_URL ?? env.RIFT_MIRROR_URL ?? DEFAULT_DOWNLOAD_BASE;
-  const { archiveName } = platformTarget(opts.platform, opts.arch);
+  const { archiveName } = platformTarget(opts.platform, opts.arch, opts.libc);
   return `${base}/${version}/${archiveName(version)}`;
 }
 
@@ -165,6 +206,28 @@ function defaultLookupPath(name: string): string | null {
     return found && fs.existsSync(found) ? found : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Confirms a PATH candidate is actually the Rift engine (issue #84).
+ *
+ * `mb` is in {@link BINARY_NAMES} for Mountebank-migration ergonomics, but Homebrew's Mountebank
+ * installs a `/usr/local/bin/mb` too — accepting it verbatim would **silently run Mountebank while
+ * the caller believes it runs Rift**. Rift reports `rift <version>` for `--version`; Mountebank
+ * reports a bare `<version>`. So we accept a PATH hit only when its `--version` names Rift. On any
+ * probe error we reject (safer to fall through to the cache/download than to run an unknown binary).
+ */
+function defaultProbeIsRift(binPath: string): boolean {
+  try {
+    const out = execSync(`"${binPath}" --version`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 5000,
+    });
+    return /\brift\b/i.test(out);
+  } catch {
+    return false;
   }
 }
 
@@ -261,6 +324,8 @@ export interface ResolveBinaryOptions {
   env?: EnvRecord;
   fileExists?: (p: string) => boolean;
   lookupPath?: (name: string) => string | null;
+  /** Confirms a PATH candidate is really Rift (rejects a shadowing `mb`/Mountebank). See #84. */
+  probeIsRift?: (binPath: string) => boolean;
   cacheLookup?: (version: string) => string | null;
   download?: (url: string, sha: string | null) => Promise<string>;
   mirror?: string;
@@ -273,7 +338,8 @@ export interface ResolveBinaryOptions {
  *
  * Resolution order:
  *   1. `opts.binaryPath ?? env.RIFT_BINARY_PATH`, if it exists on disk.
- *   2. The first of `rift-http-proxy` / `rift` / `mb` found on `PATH`.
+ *   2. The first of `rift-http-proxy` / `rift` / `mb` found on `PATH` **that `--version`-probes as
+ *      Rift** — a PATH `mb` that is actually Mountebank is skipped, not run (#84).
  *   3. A previously-downloaded copy in the local version cache.
  *   4. If air-gapped (`RIFT_OFFLINE` / `RIFT_SKIP_BINARY_DOWNLOAD`), throw — never download.
  *   5. Otherwise, download the release archive for the resolved version and cache it.
@@ -283,6 +349,7 @@ export async function resolveBinary(opts: ResolveBinaryOptions = {}): Promise<st
   const version = opts.version ?? DEFAULT_ENGINE_VERSION;
   const fileExists = opts.fileExists ?? fs.existsSync;
   const lookupPath = opts.lookupPath ?? defaultLookupPath;
+  const probeIsRift = opts.probeIsRift ?? defaultProbeIsRift;
   const cacheLookup = opts.cacheLookup ?? defaultCacheLookup;
   const download = opts.download ?? makeDefaultDownload(version, opts.platform, opts.arch, env);
 
@@ -292,10 +359,11 @@ export async function resolveBinary(opts: ResolveBinaryOptions = {}): Promise<st
     return explicitPath;
   }
 
-  // 2. PATH lookup.
+  // 2. PATH lookup — but only accept a hit that version-probes as Rift, so a Mountebank `mb` on
+  // PATH doesn't get silently run in Rift's place (#84).
   for (const name of BINARY_NAMES) {
     const found = lookupPath(name);
-    if (found) return found;
+    if (found && probeIsRift(found)) return found;
   }
 
   // 3. Local version cache.
