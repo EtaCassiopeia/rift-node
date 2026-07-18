@@ -5,6 +5,17 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ## Unreleased
 
+### Changed
+
+- **`create()` fails loud on `impostersRepository` / `redis`** (issue #76): these options were
+  previously *accepted-and-ignored*, so a Mountebank consumer that backed its imposter store with a
+  custom repository would silently get an in-memory, single-process server — a wrong-but-quiet
+  result surfacing only downstream. `create()` now throws the new `UnsupportedCreateOptionError`
+  (exported) before spawning, naming the option and the supported alternatives (`datadir` for
+  persistence, per-imposter `flowState()` for distributed scenario state). **Breaking** for any code
+  that relied on these options being ignored; the fix is to remove them (Rift's engine cannot load
+  an in-process Node repository module — see `docs/migration.md`).
+
 ### Added
 
 - **`datadir` on the compat `create()`** (issue #77): `create({ datadir })` maps to the engine's

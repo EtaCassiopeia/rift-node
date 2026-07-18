@@ -198,8 +198,9 @@ imposter state survives a restart.
 
 **Custom `impostersRepository` (+ its `redis` bag) has no direct equivalent.** Mountebank loads a
 Node module in-process to back its imposter store; Rift's engine is a native binary and cannot load
-one, so `create({ impostersRepository })` / `create({ redis })` is **not supported**. Migrate a
-repository-backed deployment as follows:
+one, so `create({ impostersRepository })` / `create({ redis })` **throws
+`UnsupportedCreateOptionError`** rather than silently degrading to an in-memory, single-process
+server. Migrate a repository-backed deployment as follows:
 
 - **Restart persistence** (imposters survive a bounce) → `datadir`, as above.
 - **Distributed scenario / flow state** (shared across instances) → per-imposter
