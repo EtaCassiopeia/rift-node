@@ -146,3 +146,62 @@ describe('issue #28 — create() spawn-failure and child-error delivery', () => 
     expect(child.kill).toHaveBeenCalledWith('SIGKILL');
   });
 });
+
+describe('issue #77 — create() maps datadir to --datadir (Mountebank persistence parity)', () => {
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  type FakeChild = EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    kill: jest.Mock;
+  };
+
+  /** A fake spawn seam that records the argv every `create()` hands the child process. */
+  function capturingDeps(): { deps: CreateDeps; calls: string[][] } {
+    const child: FakeChild = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: jest.fn(() => true),
+    });
+    const calls: string[][] = [];
+    const deps: CreateDeps = {
+      spawn: ((_bin: string, args: string[]) => {
+        calls.push(args);
+        return child as unknown as ChildProcess;
+      }) as unknown as typeof spawnProcess,
+      resolveEngineBinary: async () => '/fake/rift-binary',
+    };
+    return { deps, calls };
+  }
+
+  function serverUpImmediately(): void {
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue({ status: 200 } as Response) as unknown as typeof fetch;
+  }
+
+  it('passes --datadir <path> when datadir is set', async () => {
+    serverUpImmediately();
+    const { deps, calls } = capturingDeps();
+
+    await create({ port: 45710, datadir: '/var/lib/rift-data' }, deps);
+
+    const args = calls[0];
+    const i = args.indexOf('--datadir');
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(args[i + 1]).toBe('/var/lib/rift-data');
+  });
+
+  it('omits --datadir when datadir is not set', async () => {
+    serverUpImmediately();
+    const { deps, calls } = capturingDeps();
+
+    await create({ port: 45711 }, deps);
+
+    expect(calls[0]).not.toContain('--datadir');
+  });
+});

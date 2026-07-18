@@ -186,10 +186,37 @@ You never have to fight the typed layer:
   (`wire.Imposter`, `wire.Stub`, `wire.Predicate`, `wire.StubResponse`, ...) for hand-building
   anything the DSL doesn't cover, or for typing a `fromJson` result.
 
+## Persistence & distributed state
+
+| Mountebank | Rift |
+|---|---|
+| `mb --datadir <dir>` / `mb.create({ datadir })` | `create({ datadir })` — or `rift.spawn({ datadir })` on the native transport |
+
+`datadir` has **full parity**: imposters created or mutated through the admin API are persisted as
+`{port}.json` under the directory and reloaded when a server starts against the same `datadir`, so
+imposter state survives a restart.
+
+**Custom `impostersRepository` (+ its `redis` bag) has no direct equivalent.** Mountebank loads a
+Node module in-process to back its imposter store; Rift's engine is a native binary and cannot load
+one, so `create({ impostersRepository })` / `create({ redis })` is **not supported**. Migrate a
+repository-backed deployment as follows:
+
+- **Restart persistence** (imposters survive a bounce) → `datadir`, as above.
+- **Distributed scenario / flow state** (shared across instances) → per-imposter
+  `_rift.flowState.backend: "redis"` with a `redis: { url }` block — via the DSL's
+  `flowState({ backend: 'redis', redis: { url } })`. This is imposter-scoped state, not an imposter
+  *store*.
+- **Multi-instance imposter-CRUD sync** (one process's `POST /imposters` becoming visible on another
+  — the pub/sub half of a custom Redis repository) is a **non-goal**: Rift provides no cross-instance
+  imposter replication today. A deployment that needs it keeps that coordination layer *above* the
+  admin API (it is plain REST and works unchanged) until engine-side distributed support lands.
+
 ## Things Rift rejects that Mountebank allowed
 
 - **Non-HTTP(S) protocols.** Rift serves HTTP/HTTPS (and h2c); Mountebank's `tcp`/`smtp` protocol
   imposters have no Rift equivalent.
+- **Custom `impostersRepository` / `redis` on `create()`.** No in-process repository module; see
+  [Persistence & distributed state](#persistence--distributed-state) for the migration path.
 
 ## See also
 

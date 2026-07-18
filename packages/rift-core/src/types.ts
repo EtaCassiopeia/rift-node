@@ -32,6 +32,12 @@ export interface CreateOptions {
   logfile?: string;
   /** IP addresses allowed to connect (Mountebank compatibility) */
   ipWhitelist?: string[];
+  /**
+   * Directory for imposter persistence (Mountebank `--datadir` parity). Imposters created or
+   * mutated through the admin API are written as `{port}.json` under this directory and reloaded
+   * when a server is started against the same `datadir`.
+   */
+  datadir?: string;
   /** Enable JavaScript injection via Rhai scripts */
   allowInjection?: boolean;
   /** Path to custom imposters repository module */
