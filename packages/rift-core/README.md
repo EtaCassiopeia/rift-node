@@ -130,7 +130,9 @@ await fetch(`${users.url}/api/users/1`);
 
 Existing `@rift-vs/rift`/Mountebank code (raw `POST /imposters`, the `mb` CLI, ...) keeps working
 verbatim. Permanent, not deprecated — see [`docs/migration.md`](docs/migration.md). See
-[`examples/quickstart-compat.ts`](examples/quickstart-compat.ts).
+[`examples/quickstart-compat.ts`](examples/quickstart-compat.ts). `create({ datadir })` gives
+Mountebank `--datadir` persistence parity — imposters survive a restart; see
+[migration §persistence](docs/migration.md#persistence--distributed-state).
 
 <!-- docs:embed quickstart-compat -->
 ```ts

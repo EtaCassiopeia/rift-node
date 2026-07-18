@@ -7,6 +7,15 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ### Added
 
+- **`datadir` on the compat `create()`** (issue #77): `create({ datadir })` maps to the engine's
+  `--datadir`, matching Mountebank's `mb.create({ datadir })` / `mb --datadir` — imposters created
+  or mutated through the admin API are persisted as `{port}.json` and reloaded when a server starts
+  against the same directory, so imposter state survives a restart (the compat path reaches parity
+  with `rift.spawn({ datadir })`). New `docs/migration.md` **"Persistence & distributed state"**
+  section documents the migration path for a custom Mountebank `impostersRepository` deployment:
+  `datadir` for restart persistence, per-imposter `_rift.flowState` redis for distributed scenario
+  state, and the explicit non-goal of multi-instance imposter-CRUD sync.
+
 - **Docs that don't rot** (issue #14): the README is restructured around a hero quick-start +
   per-transport quick starts (`rift.embedded()`/`rift.spawn()`/`rift.connect()`/Mountebank-compat
   `create()`), a feature-tour table, and the real (grepped, not guessed) env var reference. New

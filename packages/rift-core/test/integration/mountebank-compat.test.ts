@@ -8,6 +8,7 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import { execSync } from 'child_process';
 import { create } from '../../src/index.js';
 import type { RiftServer, ImposterConfig, Imposter } from '../../src/types.js';
@@ -412,5 +413,45 @@ conditionalDescribe('Mountebank API Compatibility', () => {
         // For full stub management, recreate the imposter with all stubs included
       });
     });
+  });
+});
+
+// issue #77 — datadir persistence round-trip through the compat create() path. Proves the SDK
+// actually wires --datadir end-to-end (not just the flag): an imposter POSTed to one server is
+// reloaded by a fresh server pointed at the same datadir.
+conditionalDescribe('Mountebank persistence (datadir) parity', () => {
+  const adminPort = 4600;
+  const imposterPort = 4601;
+  let datadir: string;
+
+  beforeEach(() => {
+    datadir = fs.mkdtempSync(`${os.tmpdir()}/rift-datadir-`);
+  });
+
+  afterEach(() => {
+    fs.rmSync(datadir, { recursive: true, force: true });
+  });
+
+  it('persists a POSTed imposter and reloads it on restart with the same datadir', async () => {
+    const first = await create({ port: adminPort, datadir });
+    try {
+      await postImposter(`http://localhost:${adminPort}`, {
+        port: imposterPort,
+        protocol: 'http',
+        stubs: [{ responses: [{ is: { statusCode: 200, body: 'persisted' } }] }],
+      });
+    } finally {
+      await first.close();
+    }
+
+    const second = await create({ port: adminPort, datadir });
+    try {
+      const res = await fetch(`http://localhost:${adminPort}/imposters/${imposterPort}`);
+      expect(res.status).toBe(200);
+      const imposter = (await res.json()) as Imposter;
+      expect(imposter.port).toBe(imposterPort);
+    } finally {
+      await second.close();
+    }
   });
 });

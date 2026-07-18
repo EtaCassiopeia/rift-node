@@ -83,6 +83,9 @@ function buildCliArgs(options: CreateOptions): string[] {
   if (options.logfile) {
     args.push('--log', options.logfile);
   }
+  if (options.datadir) {
+    args.push('--datadir', options.datadir);
+  }
   if (options.allowInjection) {
     args.push('--allow-injection');
   }
