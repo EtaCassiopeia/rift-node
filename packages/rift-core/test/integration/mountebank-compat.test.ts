@@ -455,3 +455,48 @@ conditionalDescribe('Mountebank persistence (datadir) parity', () => {
     }
   });
 });
+
+// issue #78 — pin numberOfRequests on the imposter views. The engine already implements it
+// (admin_api/types.rs, journal-backed, counts even when recordRequests is off); this guards the
+// SDK-visible wire field against a regression that would leave consumers reading `undefined`.
+conditionalDescribe('Mountebank numberOfRequests parity', () => {
+  const adminPort = 4620;
+  const imposterPort = 4621;
+  const baseUrl = `http://localhost:${adminPort}`;
+  let server: RiftServer;
+
+  beforeAll(async () => {
+    server = await create({ port: adminPort });
+  });
+
+  afterAll(async () => {
+    await server.close();
+  });
+
+  it('counts matched requests (recordRequests off) and exposes numberOfRequests on both views', async () => {
+    // No `recordRequests` — pins that the counter fires regardless of recording (the likely
+    // regression axis).
+    await postImposter(baseUrl, {
+      port: imposterPort,
+      protocol: 'http',
+      stubs: [{ responses: [{ is: { statusCode: 200, body: 'ok' } }] }],
+    });
+
+    const fresh = (await (await fetch(`${baseUrl}/imposters/${imposterPort}`)).json()) as Imposter;
+    expect(fresh.numberOfRequests).toBe(0);
+
+    await fetch(`http://localhost:${imposterPort}/`);
+    await fetch(`http://localhost:${imposterPort}/`);
+
+    const counted = (await (
+      await fetch(`${baseUrl}/imposters/${imposterPort}`)
+    ).json()) as Imposter;
+    expect(counted.numberOfRequests).toBe(2);
+
+    const list = (await (await fetch(`${baseUrl}/imposters`)).json()) as {
+      imposters: Imposter[];
+    };
+    const entry = list.imposters.find((i) => i.port === imposterPort);
+    expect(entry?.numberOfRequests).toBe(2);
+  });
+});
