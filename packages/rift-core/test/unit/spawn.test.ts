@@ -14,6 +14,7 @@ import {
   resolveBinary,
   binaryDownloadUrl,
   platformTarget,
+  detectLibc,
   isAirGapped,
   verifySha256,
   parseSha256Sidecar,
@@ -42,6 +43,34 @@ describe('spawn — platform target mapping', () => {
 
   it('throws on an unsupported platform', () => {
     expect(() => platformTarget('sunos', 'sparc')).toThrow();
+  });
+
+  it('selects the musl target on Linux when libc=musl (#84)', () => {
+    expect(platformTarget('linux', 'x64', 'musl').target).toBe('x86_64-unknown-linux-musl');
+    expect(platformTarget('linux', 'arm64', 'musl').target).toBe('aarch64-unknown-linux-musl');
+    // gnu stays the default for glibc.
+    expect(platformTarget('linux', 'x64', 'glibc').target).toBe('x86_64-unknown-linux-gnu');
+    // libc is inert on non-Linux platforms.
+    expect(platformTarget('darwin', 'arm64', 'musl').target).toBe('aarch64-apple-darwin');
+  });
+
+  it('binaryDownloadUrl honors an explicit musl libc (#84)', () => {
+    const url = binaryDownloadUrl('v0.14.0', {
+      env: {},
+      platform: 'linux',
+      arch: 'arm64',
+      libc: 'musl',
+    });
+    expect(url).toBe(`${DEFAULT_BASE}/v0.14.0/rift-v0.14.0-aarch64-unknown-linux-musl.tar.gz`);
+  });
+
+  it('detectLibc reports glibc for non-Linux and when simulating another platform', () => {
+    expect(detectLibc('darwin')).toBe('glibc');
+    expect(detectLibc('win32')).toBe('glibc');
+    // Simulating linux from a non-linux host can't probe -> defaults to glibc (unless host IS linux).
+    if (process.platform !== 'linux') {
+      expect(detectLibc('linux')).toBe('glibc');
+    }
   });
 });
 
@@ -143,7 +172,7 @@ describe('spawn — resolveBinary resolution order (injected IO)', () => {
     expect(download).not.toHaveBeenCalled();
   });
 
-  it('2) falls back to a PATH lookup', async () => {
+  it('2) falls back to a PATH lookup (that version-probes as Rift)', async () => {
     const download = jest.fn(async () => '/downloaded');
     const got = await resolveBinary({
       env: {},
@@ -155,10 +184,30 @@ describe('spawn — resolveBinary resolution order (injected IO)', () => {
         }
         return null;
       },
+      probeIsRift: () => true,
       download: download as unknown as (u: string, s: string | null) => Promise<string>,
     });
     expect(got).toBe('/usr/local/bin/rift');
     expect(download).not.toHaveBeenCalled();
+  });
+
+  it('2b) skips a PATH hit that is NOT Rift (Mountebank `mb` shadowing, #84)', async () => {
+    const download = jest.fn(async () => '/downloaded');
+    const probed: string[] = [];
+    const got = await resolveBinary({
+      env: {},
+      fileExists: () => false,
+      // A Homebrew Mountebank is on PATH as `mb`; nothing else matches.
+      lookupPath: (name) => (name === 'mb' ? '/opt/homebrew/bin/mb' : null),
+      probeIsRift: (p) => {
+        probed.push(p);
+        return false; // `mb --version` -> "2.9.1", not Rift
+      },
+      cacheLookup: () => null,
+      download: download as unknown as (u: string, s: string | null) => Promise<string>,
+    });
+    expect(probed).toContain('/opt/homebrew/bin/mb');
+    expect(got).toBe('/downloaded'); // fell through instead of running Mountebank
   });
 
   it('3) uses the version+sha cache before downloading', async () => {

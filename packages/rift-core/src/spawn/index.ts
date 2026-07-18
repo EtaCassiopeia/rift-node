@@ -9,6 +9,7 @@ export {
   resolveBinary,
   binaryDownloadUrl,
   platformTarget,
+  detectLibc,
   isAirGapped,
   verifySha256,
   parseSha256Sidecar,
@@ -16,7 +17,7 @@ export {
   extractedBinaryCandidates,
   DEFAULT_ENGINE_VERSION,
 } from './resolve.js';
-export type { PlatformTarget, DownloadUrlOptions, ResolveBinaryOptions, EnvRecord } from './resolve.js';
+export type { PlatformTarget, DownloadUrlOptions, ResolveBinaryOptions, EnvRecord, Libc } from './resolve.js';
 
 export { buildSpawnArgs, spawn } from './spawn.js';
 export type { SpawnedEngine, SpawnOptions } from './spawn.js';
