@@ -19,6 +19,7 @@ import { spawn as spawnProcess, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { findBinary } from '../binary.js';
 import { resolveBinary } from '../spawn/resolve.js';
+import { UnsupportedCreateOptionError } from '../errors.js';
 import type { CreateOptions, RiftServer } from '../types.js';
 
 const DEFAULT_PORT = 2525;
@@ -92,9 +93,34 @@ function buildCliArgs(options: CreateOptions): string[] {
   if (options.ipWhitelist && options.ipWhitelist.length > 0) {
     args.push('--ip-whitelist', options.ipWhitelist.join(','));
   }
-  // Note: `redis` and `impostersRepository` are accepted-and-ignored for Mountebank compatibility;
-  // configure distributed flow state per-imposter via the DSL's `flowState()` instead.
   return args;
+}
+
+/**
+ * Reject {@link CreateOptions} that Rift's engine cannot honor, before any process is spawned.
+ * `impostersRepository` is a Node in-process module the native engine cannot load; `redis` is
+ * meaningful only to such a module. Silently ignoring either would run an in-memory, single-process
+ * server while the caller believed persistence/topology were configured — a wrong-but-quiet result.
+ */
+function rejectUnsupportedOptions(options: CreateOptions): void {
+  if (options.impostersRepository !== undefined) {
+    throw new UnsupportedCreateOptionError(
+      'impostersRepository',
+      "create({ impostersRepository }) is not supported: Rift's engine is a native binary and " +
+        'cannot load a Node repository module. Use `datadir` for imposter persistence and ' +
+        'per-imposter `_rift.flowState` (the DSL `flowState()`) for distributed scenario state. ' +
+        'See docs/migration.md "Persistence & distributed state".'
+    );
+  }
+  if (options.redis !== undefined) {
+    throw new UnsupportedCreateOptionError(
+      'redis',
+      'create({ redis }) is not supported: it only configures a custom impostersRepository, which ' +
+        "Rift does not support. For distributed flow state use per-imposter " +
+        "`_rift.flowState.backend: 'redis'` (the DSL `flowState()`). " +
+        'See docs/migration.md "Persistence & distributed state".'
+    );
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -161,14 +187,18 @@ const defaultDeps: CreateDeps = { spawn: spawnProcess, resolveEngineBinary };
 /**
  * Create a Rift server, Mountebank-`mb.create()`-compatibly.
  *
- * @param options Server configuration. `redis` and `impostersRepository` are accepted-and-ignored
- *   (Mountebank compatibility) — configure flow state per-imposter via the DSL's `flowState()`.
+ * @param options Server configuration. `impostersRepository` and `redis` are rejected with
+ *   {@link UnsupportedCreateOptionError} — Rift's native engine cannot load an in-process Node
+ *   repository module; configure `datadir` for persistence and per-imposter `flowState()` for
+ *   distributed scenario state (see `docs/migration.md`).
  * @returns A {@link RiftServer} handle.
+ * @throws {UnsupportedCreateOptionError} when `impostersRepository` or `redis` is set.
  */
 export async function create(
   options: CreateOptions = {},
   deps: CreateDeps = defaultDeps
 ): Promise<RiftServer> {
+  rejectUnsupportedOptions(options);
   const port = options.port || DEFAULT_PORT;
   const host = options.host || DEFAULT_HOST;
   const args = buildCliArgs(options);

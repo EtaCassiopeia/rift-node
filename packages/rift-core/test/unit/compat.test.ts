@@ -11,6 +11,7 @@ import { EventEmitter } from 'events';
 import type { ChildProcess, spawn as spawnProcess } from 'child_process';
 import { jest } from '@jest/globals';
 import { create, waitForServer, type CreateDeps } from '../../src/compat/index.js';
+import { UnsupportedCreateOptionError } from '../../src/errors.js';
 
 describe('issue #25 — compat waitForServer (fetch-based poll)', () => {
   const realFetch = globalThis.fetch;
@@ -203,5 +204,72 @@ describe('issue #77 — create() maps datadir to --datadir (Mountebank persisten
     await create({ port: 45711 }, deps);
 
     expect(calls[0]).not.toContain('--datadir');
+  });
+});
+
+describe('issue #76 — create() fails loud on options it cannot honor (no silent in-memory fallback)', () => {
+  /** Spy deps: fails the test if the process is ever spawned or the binary resolved. */
+  function spyDeps(): { deps: CreateDeps; spawn: jest.Mock; resolve: jest.Mock } {
+    const spawn = jest.fn(() => {
+      throw new Error('spawn must not be called — create() should reject before spawning');
+    });
+    const resolve = jest.fn(async () => '/fake/rift-binary');
+    const deps: CreateDeps = {
+      spawn: spawn as unknown as typeof spawnProcess,
+      resolveEngineBinary: resolve as unknown as () => Promise<string>,
+    };
+    return { deps, spawn, resolve };
+  }
+
+  it('rejects impostersRepository before spawning, naming the option and the alternatives', async () => {
+    const { deps, spawn, resolve } = spyDeps();
+
+    const err = await create({ port: 2525, impostersRepository: './repo.cjs' }, deps).catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(UnsupportedCreateOptionError);
+    expect((err as Error).message).toMatch(/impostersRepository/);
+    expect((err as Error).message).toMatch(/datadir/);
+    expect((err as Error).message).toMatch(/flowState/i);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('rejects redis before spawning, pointing at per-imposter flowState', async () => {
+    const { deps, spawn } = spyDeps();
+
+    const err = await create(
+      { port: 2525, redis: { host: 'localhost', port: 6379 } },
+      deps
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(UnsupportedCreateOptionError);
+    expect((err as Error).message).toMatch(/redis/);
+    expect((err as Error).message).toMatch(/flowState/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('leaves a normal create() (no rejected options) untouched — it proceeds to spawn', async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue({ status: 200 } as Response) as unknown as typeof fetch;
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: jest.fn(() => true),
+    });
+    const spawn = jest.fn(() => child as unknown as ChildProcess);
+    const deps: CreateDeps = {
+      spawn: spawn as unknown as typeof spawnProcess,
+      resolveEngineBinary: async () => '/fake/rift-binary',
+    };
+    try {
+      await create({ port: 45720, datadir: '/tmp/ok' }, deps);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

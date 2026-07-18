@@ -40,9 +40,19 @@ export interface CreateOptions {
   datadir?: string;
   /** Enable JavaScript injection via Rhai scripts */
   allowInjection?: boolean;
-  /** Path to custom imposters repository module */
+  /**
+   * Mountebank custom imposters-repository module path. **Not supported** — Rift's engine is a
+   * native binary and cannot load an in-process Node module, so `create()` throws
+   * {@link UnsupportedCreateOptionError} rather than silently running in-memory. Use {@link datadir}
+   * for persistence; see `docs/migration.md`.
+   */
   impostersRepository?: string;
-  /** Redis configuration for distributed state */
+  /**
+   * Mountebank custom-repository Redis config. **Not supported** — only a custom
+   * {@link impostersRepository} consumes it, which Rift does not support, so `create()` throws
+   * {@link UnsupportedCreateOptionError}. For distributed scenario state use per-imposter
+   * `flowState()`; see `docs/migration.md`.
+   */
   redis?: RedisOptions;
 }
 

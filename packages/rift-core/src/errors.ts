@@ -6,8 +6,9 @@
  * (shared by the remote, spawn, and embedded transports, the wire codec, verification, and the
  * native loader), which is why they live at the package root rather than under any one transport.
  *
- * The Mountebank-compat `create()` layer intentionally keeps throwing plain `Error`s to preserve its
- * historical contract; everything else in the SDK throws one of the classes below.
+ * The Mountebank-compat `create()` layer validates its options up front with
+ * {@link UnsupportedCreateOptionError}, but its runtime/spawn path still throws plain `Error`s to
+ * preserve its historical contract; everything else in the SDK throws one of the classes below.
  */
 
 import type { Predicate } from './model/index.js';
@@ -120,6 +121,23 @@ export class UnsupportedPredicateError extends RiftError {
     super(message);
     this.name = 'UnsupportedPredicateError';
     this.operator = operator;
+  }
+}
+
+/**
+ * Thrown by {@link create} when a {@link CreateOptions} field cannot be honored by Rift's engine
+ * and honoring it silently would misrepresent the server's behavior — e.g. `impostersRepository`
+ * (a Node in-process module the native engine cannot load) or `redis` (meaningful only to such a
+ * module). Failing loud beats a silent in-memory fallback: the message names the option and the
+ * supported alternative (`datadir`, per-imposter `flowState`).
+ */
+export class UnsupportedCreateOptionError extends RiftError {
+  readonly option: string;
+
+  constructor(option: string, message: string) {
+    super(message);
+    this.name = 'UnsupportedCreateOptionError';
+    this.option = option;
   }
 }
 
