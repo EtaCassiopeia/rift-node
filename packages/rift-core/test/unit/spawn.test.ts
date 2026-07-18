@@ -197,8 +197,9 @@ describe('spawn — resolveBinary resolution order (injected IO)', () => {
     const got = await resolveBinary({
       env: {},
       fileExists: () => false,
-      // A Homebrew Mountebank is on PATH as `mb`; nothing else matches.
-      lookupPath: (name) => (name === 'mb' ? '/opt/homebrew/bin/mb' : null),
+      // A Homebrew Mountebank is on PATH as `mb`; nothing else matches. (On Windows the probe
+      // name is `mb.exe`, so match both so the test isn't platform-fragile.)
+      lookupPath: (name) => (name === 'mb' || name === 'mb.exe' ? '/opt/homebrew/bin/mb' : null),
       probeIsRift: (p) => {
         probed.push(p);
         return false; // `mb --version` -> "2.9.1", not Rift
