@@ -1,0 +1,152 @@
+# Closes the full-auto dependency loop: when CI passes on an engine bump PR (opened by
+# `engine-bump.yml`), squash-merge it and cut the next npm patch.
+#
+# Triggered by the *conclusion* of the CI workflow (workflow_run), so it observes the real, aggregate
+# result — success only if the whole matrix (node 20/22/24 × ubuntu/macos/windows) plus docs pass. A
+# red CI run does nothing here: the bump PR stays open for a human. That is the intended fail-to-human
+# path.
+#
+# Guarded to act ONLY on a successful, PR-triggered CI run whose head is a `chore/engine-*` branch in
+# THIS repo (never a fork).
+#
+# Publishing is inline (`npm publish`, the same command as publish.yml's stable job), so the loop needs
+# no extra PAT beyond the `NPM_TOKEN` that publish.yml already uses. The version source of truth is
+# `packages/rift-core/package.json` (the two workspaces are versioned in lockstep); the bump is
+# committed to master and tagged, and a GitHub Release is created for the record. The Release is
+# created with GITHUB_TOKEN, which deliberately does NOT trigger publish.yml's release-gated job, so
+# the package is published exactly once (here).
+#
+# FIRST RELEASE IS GATED TO A HUMAN: rift-node has no `v*` tag yet. Until one exists, this job merges
+# the bump PR but does NOT publish — cut the first release deliberately (set the package version and
+# publish a GitHub Release `vX.Y.Z` matching it). Auto-release takes over from the next bump onward.
+
+name: Auto-release on green bump
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  auto-release:
+    name: Merge bump PR and cut an npm patch release
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'chore/engine-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Merge the bump PR
+        id: merge
+        shell: bash
+        env:
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          PR="$(gh pr list --repo "${{ github.repository }}" --head "${BRANCH}" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "${PR}" ]; then
+            echo "No open PR for ${BRANCH} (already merged, or closed). Nothing to do."
+            echo "merged=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Squash-merging PR #${PR} (${BRANCH})."
+          gh pr merge "${PR}" --repo "${{ github.repository }}" --squash --delete-branch
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+
+      - name: Compute the next patch version (first release gated to a human)
+        id: ver
+        if: steps.merge.outputs.merged == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "${LATEST_TAG}" ]; then
+            echo "::notice::rift-node has no v* release tag yet. The bump PR is merged, but the FIRST"
+            echo "::notice::release is intentionally left to a human — set the package version and publish"
+            echo "::notice::a GitHub Release vX.Y.Z matching it. Auto-release takes over from the next bump."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # package.json is the version source of truth (npm); increment its patch.
+          CUR="$(node -p "require('./packages/rift-core/package.json').version")"
+          if ! printf '%s' "${CUR}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::package.json version '${CUR}' is not a plain MAJOR.MINOR.PATCH; refusing to guess."
+            exit 1
+          fi
+          MAJ="${CUR%%.*}"; REST="${CUR#*.}"; MIN="${REST%%.*}"; PAT="${REST##*.}"
+          NEXT="${MAJ}.${MIN}.$((PAT + 1))"
+          echo "package.json ${CUR} -> next ${NEXT} (latest tag ${LATEST_TAG})."
+          echo "next=${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        if: steps.ver.outputs.publish == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Bump version, publish, tag, and record the release
+        if: steps.ver.outputs.publish == 'true'
+        shell: bash
+        env:
+          NEXT: ${{ steps.ver.outputs.next }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN is not set — cannot publish. The bump PR is merged; publish the"
+            echo "::error::release manually (or add NPM_TOKEN and re-run) so the loop can arm."
+            exit 1
+          fi
+
+          # The squash-merge advanced master on the remote; move to its new HEAD before releasing.
+          git fetch origin "${{ github.event.repository.default_branch }}"
+          git reset --hard FETCH_HEAD
+
+          TAG="v${NEXT}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null || git ls-remote --exit-code --tags origin "${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists; nothing to publish (idempotent no-op)."
+            exit 0
+          fi
+
+          npm ci
+          npm run build
+
+          # Stamp both workspaces in lockstep (no git tag here — we tag explicitly below).
+          npm version "${NEXT}" --no-git-tag-version --allow-same-version \
+            -w @rift-vs/rift -w @rift-vs/rift-embedded
+
+          # Publish FIRST (the irreversible external action). If it fails, nothing below runs and
+          # master is untouched, so the next run cleanly retries the same version.
+          npm publish --access public --provenance -w @rift-vs/rift -w @rift-vs/rift-embedded
+
+          # Persist the version bump + tag now that the packages are live.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): ${TAG} (auto-cut after engine bump)"
+          git push origin "HEAD:${{ github.event.repository.default_branch }}"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+          # Record the GitHub Release (release notes). Created with GITHUB_TOKEN, which does NOT
+          # re-trigger publish.yml's release-gated job — so publishing stays exactly-once (above).
+          gh release create "${TAG}" --repo "${{ github.repository }}" --title "${TAG}" --verify-tag --generate-notes

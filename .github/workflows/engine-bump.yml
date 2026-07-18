@@ -1,0 +1,207 @@
+# Keeps DEFAULT_ENGINE_VERSION (the spawn transport's engine pin) in
+# packages/rift-core/src/spawn/resolve.ts in sync with the latest EtaCassiopeia/rift release.
+#
+# That constant is "the latest engine release this SDK is tested against". This workflow does NOT
+# bump anything unless EtaCassiopeia/rift has published a release newer than the one pinned — a real
+# "chore/engine-<version>" PR only appears when that is true. Otherwise every run is a no-op that logs
+# "up to date" and exits, on both the daily schedule and manual dispatch. Only DEFAULT_ENGINE_VERSION
+# moves (see scripts/bump-engine.sh); the cdylib/native pin and minEngineVersion are separate human
+# decisions.
+#
+# When a bump PR is opened, CI runs it. If CI is green, the companion `auto-release.yml` merges it and
+# cuts the next npm patch. If CI is red, the PR stays open for a human — the intended fail-to-human
+# path.
+#
+# Manual dispatch accepts a `dry_run` input: when true, it does every read/compare/branch/commit step
+# but stops short of pushing the branch / opening the PR, logging what it would have done.
+
+name: Engine Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Do everything except push the branch / open the PR; just log what would happen"
+        type: boolean
+        default: false
+  schedule:
+    # Daily: 06:00 UTC.
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  UPSTREAM_REPO: EtaCassiopeia/rift
+  PIN_FILE: packages/rift-core/src/spawn/resolve.ts
+
+jobs:
+  engine-bump:
+    name: Check for a newer rift engine release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve dry-run flag
+        id: flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
+          echo "dry_run=${DRY_RUN}" >> "$GITHUB_OUTPUT"
+          echo "Dry run: ${DRY_RUN}"
+
+      - name: Determine latest upstream release and current pin
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! gh auth status >/dev/null 2>&1; then
+            echo "gh is not authenticated (GITHUB_TOKEN missing/invalid) — cannot query releases."
+            exit 1
+          fi
+
+          RELEASE_JSON="$(gh release view --repo "${UPSTREAM_REPO}" --json tagName,body)"
+          TAG_NAME="$(echo "${RELEASE_JSON}" | jq -r '.tagName')"
+          if [ -z "${TAG_NAME}" ] || [ "${TAG_NAME}" = "null" ]; then
+            echo "Could not resolve a latest release tag for ${UPSTREAM_REPO}."
+            exit 1
+          fi
+          LATEST="${TAG_NAME#v}"
+
+          CURRENT="$(grep -oP "(?<=DEFAULT_ENGINE_VERSION = 'v)[0-9]+\.[0-9]+\.[0-9]+" "${PIN_FILE}" | head -n1)"
+          if [ -z "${CURRENT}" ]; then
+            echo "Could not read DEFAULT_ENGINE_VERSION from ${PIN_FILE}."
+            exit 1
+          fi
+
+          echo "Latest upstream release: ${LATEST} (tag ${TAG_NAME})"
+          echo "Current pinned version:  ${CURRENT}"
+
+          echo "latest=${LATEST}" >> "$GITHUB_OUTPUT"
+          echo "current=${CURRENT}" >> "$GITHUB_OUTPUT"
+
+          # Multiline changelog excerpt, truncated so it fits comfortably in a PR body.
+          BODY="$(echo "${RELEASE_JSON}" | jq -r '.body // ""' | head -c 4000)"
+          # Randomized heredoc delimiter so a release-body line can't spoof the terminator
+          # (the documented GitHub Actions multiline-output-injection vector).
+          DELIM="ENGINE_BUMP_BODY_$(openssl rand -hex 8)"
+          {
+            echo "body<<${DELIM}"
+            echo "${BODY}"
+            echo "${DELIM}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compare versions
+        id: compare
+        shell: bash
+        run: |
+          set -euo pipefail
+          LATEST="${{ steps.versions.outputs.latest }}"
+          CURRENT="${{ steps.versions.outputs.current }}"
+
+          if [ "${LATEST}" = "${CURRENT}" ]; then
+            echo "Up to date (current=${CURRENT}, latest=${LATEST}). Nothing to do."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SMALLEST="$(printf '%s\n%s\n' "${CURRENT}" "${LATEST}" | sort -V | head -n1)"
+          if [ "${SMALLEST}" = "${LATEST}" ]; then
+            echo "Latest release (${LATEST}) is not newer than current (${CURRENT}). Nothing to do."
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "A newer engine release is available: ${CURRENT} -> ${LATEST}."
+          echo "should_bump=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing branch or PR
+        id: existing
+        if: steps.compare.outputs.should_bump == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="chore/engine-${{ steps.versions.outputs.latest }}"
+
+          EXISTS=false
+          if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
+            echo "Branch ${BRANCH} already exists on origin."
+            EXISTS=true
+          fi
+
+          PR_COUNT="$(gh pr list --repo "${{ github.repository }}" --head "${BRANCH}" --state open --json number --jq 'length')"
+          if [ "${PR_COUNT}" -gt 0 ]; then
+            echo "An open PR already targets branch ${BRANCH}."
+            EXISTS=true
+          fi
+
+          if [ "${EXISTS}" = "true" ]; then
+            echo "Idempotent no-op: branch/PR for ${BRANCH} already present."
+          fi
+
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "exists=${EXISTS}" >> "$GITHUB_OUTPUT"
+
+      - name: Bump DEFAULT_ENGINE_VERSION and open a PR
+        if: steps.compare.outputs.should_bump == 'true' && steps.existing.outputs.exists == 'false'
+        shell: bash
+        env:
+          LATEST: ${{ steps.versions.outputs.latest }}
+          CURRENT: ${{ steps.versions.outputs.current }}
+          BRANCH: ${{ steps.existing.outputs.branch }}
+          DRY_RUN: ${{ steps.flags.outputs.dry_run }}
+          CHANGELOG: ${{ steps.versions.outputs.body }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "${BRANCH}"
+
+          # scripts/bump-engine.sh edits ONLY DEFAULT_ENGINE_VERSION and self-verifies the change.
+          bash scripts/bump-engine.sh "${LATEST}"
+
+          git add "${PIN_FILE}"
+          git commit \
+            -m "chore(deps): bump engine to ${LATEST}" \
+            -m "Bumps DEFAULT_ENGINE_VERSION (the spawn transport's default engine pin) in ${PIN_FILE}. The cdylib/native pin and minEngineVersion move separately and are intentionally left alone."
+
+          PR_TITLE="chore(deps): bump engine to ${LATEST}"
+
+          # Build the PR body in a temp file rather than a heredoc: this run step is embedded in an
+          # indented YAML block scalar, and a heredoc terminator here would not reliably land at
+          # column 0, which breaks heredoc parsing.
+          PR_BODY_FILE="$(mktemp)"
+          {
+            printf 'Bumps the spawn engine pin `DEFAULT_ENGINE_VERSION` from `v%s` to `v%s` in\n' "${CURRENT}" "${LATEST}"
+            printf '`%s`. Only that constant moves — the cdylib/native pin (`DEFAULT_CDYLIB_VERSION`) and\n' "${PIN_FILE}"
+            printf '`minEngineVersion` are separate, deliberate decisions.\n\n'
+            printf '### Upstream release notes (EtaCassiopeia/rift %s)\n\n' "${LATEST}"
+            printf '%s\n\n' "${CHANGELOG}"
+            printf -- '---\n\n'
+            printf 'Full-auto loop: when CI is green, `auto-release.yml` squash-merges this PR and cuts the\n'
+            printf 'next npm patch. If CI is red, this PR stays open for human intervention. Opened\n'
+            printf 'automatically by the engine-bump workflow.\n'
+          } > "${PR_BODY_FILE}"
+
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "DRY RUN: would push branch '${BRANCH}' and open a PR titled:"
+            echo "  ${PR_TITLE}"
+            echo "DRY RUN: PR body would be:"
+            cat "${PR_BODY_FILE}"
+            exit 0
+          fi
+
+          git push origin "${BRANCH}"
+
+          gh pr create \
+            --repo "${{ github.repository }}" \
+            --base "${{ github.event.repository.default_branch || 'master' }}" \
+            --head "${BRANCH}" \
+            --title "${PR_TITLE}" \
+            --body-file "${PR_BODY_FILE}"
