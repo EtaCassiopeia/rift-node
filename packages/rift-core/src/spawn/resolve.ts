@@ -24,7 +24,7 @@ const DEFAULT_DOWNLOAD_BASE = 'https://github.com/EtaCassiopeia/rift/releases/do
  * this SDK is tested against. Always ≥ package.json's `minEngineVersion`, which moves
  * independently (it only rises when the SDK depends on newer engine behavior).
  */
-export const DEFAULT_ENGINE_VERSION = 'v0.14.0';
+export const DEFAULT_ENGINE_VERSION = 'v0.14.1';
 
 /** Binary names to probe, in order of preference, newest/most-specific first. */
 const BINARY_NAMES: readonly string[] =
