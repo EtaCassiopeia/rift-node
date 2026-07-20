@@ -43,7 +43,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EtaCassiopeia/rift-node.git",
+    "url": "git+https://github.com/achird-labs/rift-node.git",
     "directory": "packages/rift-embedded"
   }
 }

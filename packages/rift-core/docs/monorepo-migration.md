@@ -1,7 +1,7 @@
 # Moving from `rift/packages/rift-node`
 
 The `@rift-vs/rift` npm package now ships from **this repository** (`rift-node`), not from
-`rift/packages/rift-node` in the main [`rift`](https://github.com/EtaCassiopeia/rift) monorepo.
+`rift/packages/rift-node` in the main [`rift`](https://github.com/achird-labs/rift) monorepo.
 
 - **Same package name.** `npm install @rift-vs/rift` resolves to the same package either way —
   nothing changes in your `package.json`.

@@ -1,6 +1,6 @@
 # Contributing to `@rift-vs/rift`
 
-This is the official Node.js / TypeScript SDK for [Rift](https://github.com/EtaCassiopeia/rift).
+This is the official Node.js / TypeScript SDK for [Rift](https://github.com/achird-labs/rift).
 It was extracted (history-preserving) from `rift/packages/rift-node` and now versions
 independently.
 

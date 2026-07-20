@@ -23,7 +23,7 @@ import {
   buildSpawnArgs,
 } from '../../src/spawn/index.js';
 
-const DEFAULT_BASE = 'https://github.com/EtaCassiopeia/rift/releases/download';
+const DEFAULT_BASE = 'https://github.com/achird-labs/rift/releases/download';
 
 describe('spawn — platform target mapping', () => {
   it('maps known platforms to rust target triples + archive ext', () => {

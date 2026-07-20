@@ -23,7 +23,7 @@ import path from 'path';
 import { NativeLibraryError } from '../errors.js';
 import { isAirGapped, parseSha256Sidecar, verifySha256, type EnvRecord } from '../spawn/resolve.js';
 
-const DEFAULT_MANIFEST_REPO_BASE = 'https://github.com/EtaCassiopeia/rift';
+const DEFAULT_MANIFEST_REPO_BASE = 'https://github.com/achird-labs/rift';
 const LIB_PREFIX = 'librift_ffi';
 
 /**

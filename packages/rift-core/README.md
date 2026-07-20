@@ -1,6 +1,6 @@
 # rift-node
 
-Official Node.js / TypeScript SDK for [Rift](https://github.com/EtaCassiopeia/rift) — a
+Official Node.js / TypeScript SDK for [Rift](https://github.com/achird-labs/rift) — a
 high-performance, Mountebank-compatible HTTP/HTTPS mock server written in Rust. The SDK now ships
 from this repo (`@rift-vs/rift`, same package name, version line ≥ 0.12.0) — see
 [`docs/monorepo-migration.md`](docs/monorepo-migration.md) if you're coming from
@@ -265,9 +265,9 @@ example, or an example that stops compiling, fails the build.
 - [`docs/migration.md`](docs/migration.md) — Mountebank → typed-DSL, side by side
 - [`docs/monorepo-migration.md`](docs/monorepo-migration.md) — moving from `rift/packages/rift-node`
 - RFC-003 — Rift Language SDKs, §12 Node/TS amendment (design vault)
-- Sibling SDKs: [rift-java](https://github.com/EtaCassiopeia/rift-java) ·
-  [rift-scala](https://github.com/EtaCassiopeia/rift-scala) ·
-  [rift-go](https://github.com/EtaCassiopeia/rift-go)
+- Sibling SDKs: [rift-java](https://github.com/achird-labs/rift-java) ·
+  [rift-scala](https://github.com/achird-labs/rift-scala) ·
+  [rift-go](https://github.com/achird-labs/rift-go)
 
 ## License
 

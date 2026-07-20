@@ -1,9 +1,9 @@
 # Keeps DEFAULT_ENGINE_VERSION (the spawn transport's engine pin) in
-# packages/rift-core/src/spawn/resolve.ts in sync with the latest EtaCassiopeia/rift release. Thin
+# packages/rift-core/src/spawn/resolve.ts in sync with the latest achird-labs/rift release. Thin
 # caller of the shared reusable dep-bump scaffold — all invariant logic (poll / compare / idempotent
 # branch+PR / injection-safe changelog / dry-run) lives in rift-java's dep-bump.yml, and the engine
 # pin edit lives in scripts/bump.sh (which bumps ONLY DEFAULT_ENGINE_VERSION). A real
-# "chore/engine-<version>" PR only appears when EtaCassiopeia/rift has published a newer release. On
+# "chore/engine-<version>" PR only appears when achird-labs/rift has published a newer release. On
 # green CI, auto-release.yml merges it and cuts the next npm patch.
 
 name: Engine Bump
@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   bump:
-    uses: EtaCassiopeia/rift-java/.github/workflows/dep-bump.yml@master
+    uses: achird-labs/rift-java/.github/workflows/dep-bump.yml@master
     with:
       upstream_repo: achird-labs/rift
       branch_prefix: chore/engine-

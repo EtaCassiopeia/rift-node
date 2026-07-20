@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # The rift-node-specific edit half of the dependency-bump loop, invoked by the reusable
-# EtaCassiopeia/rift-java/.github/workflows/dep-bump.yml.
+# achird-labs/rift-java/.github/workflows/dep-bump.yml.
 #
 #   scripts/bump.sh --current        print the currently pinned engine version (bare, no leading v)
 #   scripts/bump.sh <new-version>    rewrite DEFAULT_ENGINE_VERSION to v<new-version> and self-verify
