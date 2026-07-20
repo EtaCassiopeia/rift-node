@@ -171,7 +171,7 @@ export interface FetchCorpusOptions {
   fetchImpl?: typeof fetch;
 }
 
-const DEFAULT_CORPUS_MIRROR = 'https://github.com/EtaCassiopeia/rift/releases/download';
+const DEFAULT_CORPUS_MIRROR = 'https://github.com/achird-labs/rift/releases/download';
 
 function defaultCorpusCacheDir(): string {
   return path.join(here, '..', '..', '.cache', 'conformance-corpus');

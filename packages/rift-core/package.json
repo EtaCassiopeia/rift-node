@@ -97,13 +97,13 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/EtaCassiopeia/rift-node.git",
+    "url": "git+https://github.com/achird-labs/rift-node.git",
     "directory": "packages/rift-core"
   },
   "bugs": {
-    "url": "https://github.com/EtaCassiopeia/rift-node/issues"
+    "url": "https://github.com/achird-labs/rift-node/issues"
   },
-  "homepage": "https://github.com/EtaCassiopeia/rift-node#readme",
+  "homepage": "https://github.com/achird-labs/rift-node#readme",
   "license": "MIT",
   "author": "Rift Contributors",
   "publishConfig": {

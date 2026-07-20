@@ -17,7 +17,7 @@ const INSTALL_HINT =
   "  1. Run 'npx rift-fetch' to download it on demand\n" +
   '  2. Set RIFT_BINARY_PATH environment variable\n' +
   "  3. Install 'rift' or 'rift-http-proxy' to your system PATH\n\n" +
-  'For manual installation, visit: https://github.com/EtaCassiopeia/rift/releases';
+  'For manual installation, visit: https://github.com/achird-labs/rift/releases';
 
 /**
  * Locate an already-present Rift binary without downloading.

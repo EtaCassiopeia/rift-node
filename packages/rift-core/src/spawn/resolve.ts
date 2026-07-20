@@ -17,7 +17,7 @@ import path from 'path';
 /** Env lookup shape shared by every function here — matches `process.env`'s shape structurally. */
 export type EnvRecord = Record<string, string | undefined>;
 
-const DEFAULT_DOWNLOAD_BASE = 'https://github.com/EtaCassiopeia/rift/releases/download';
+const DEFAULT_DOWNLOAD_BASE = 'https://github.com/achird-labs/rift/releases/download';
 
 /**
  * Default engine version to resolve when the caller doesn't pin one — the latest Rift release
