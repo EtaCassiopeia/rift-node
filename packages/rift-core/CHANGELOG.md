@@ -3,7 +3,22 @@
 All notable changes to `@rift-vs/rift` are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.15.0 — 2026-07-21
+
+First release of `@rift-vs/rift` from the `achird-labs/rift-node` repository. Everything below had
+accumulated as unreleased work in this repo; this entry is where it reaches npm.
+
+> **Upgrading from 0.14.0 (published from the old `EtaCassiopeia/rift` repo).** That line is a
+> different codebase; this one supersedes it. Both are ESM with the same entry points, so imports
+> are unchanged, but note:
+>
+> - **Node ≥ 20** is now required (was ≥ 18).
+> - **Zero runtime dependencies** — `axios` is gone.
+> - **No `postinstall` download.** The engine binary is resolved *on demand* at first use
+>   (`RIFT_BINARY_PATH` → PATH → version cache → download), never at install time, and never at all
+>   when `RIFT_OFFLINE` / `RIFT_SKIP_BINARY_DOWNLOAD` is set.
+> - The `./testkit/vitest`, `./testkit/jest`, and `./intercept-undici` subpaths are declared in the
+>   exports map but remain placeholder modules until those features land.
 
 ### Documentation
 
