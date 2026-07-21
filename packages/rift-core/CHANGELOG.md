@@ -5,6 +5,21 @@ All notable changes to `@rift-vs/rift` are documented here. This project adheres
 
 ## Unreleased
 
+### Documentation
+
+- **The two Mountebank→Rift drop-in gaps** (issue #85): `docs/migration.md` now covers both gaps a
+  real container drop-in hits. **Numeric and boolean header values** (`"Content-Length": 124`) are
+  rejected with a 400 by engines ≤ v0.14.0 and fixed in v0.15.0 — documented as a *version-scoped*
+  compat note rather than a temporary workaround, because binary resolution can still land on an
+  older engine (a PATH install, `binaryPath`/`RIFT_BINARY_PATH`, or a pinned `version:` — none
+  version-checked), and because the SDK does not stringify header values, so the same 400 reaches
+  users through `create()`, the typed DSL, and raw admin-port POSTs alike. **Multi-instance
+  deployments** gain the sanctioned replacement for a Redis-synced Mountebank fleet: independent
+  nodes behind a sticky/affinity LB keyed on the flow id
+  (`flowState({ flowIdSource: 'header:…' })`), alongside the existing `datadir` and per-imposter
+  flow-state guidance. The imposter-CRUD-sync non-goal is now stated without implying engine-side
+  config-sync is a committed roadmap item.
+
 ### Changed
 
 - **`create()` fails loud on `impostersRepository` / `redis`** (issue #76): these options were

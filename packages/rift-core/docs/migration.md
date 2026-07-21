@@ -207,10 +207,18 @@ server. Migrate a repository-backed deployment as follows:
   `_rift.flowState.backend: "redis"` with a `redis: { url }` block — via the DSL's
   `flowState({ backend: 'redis', redis: { url } })`. This is imposter-scoped state, not an imposter
   *store*.
+- **Multi-instance without shared state** → run independent Rift nodes behind a **sticky/affinity
+  load balancer keyed on the flow id** (`flowState({ flowIdSource: 'header:X-Flow-Id' })`, or the
+  `flowIdFromHeader('X-Flow-Id')` sugar). When each logical flow — a test run, a session, a tenant —
+  pins to one node, scenario state, response cycling, and request verification are all already
+  correct per-node, with no shared infrastructure and no cluster code. This, rather than rebuilding
+  a Redis imposter repository, is the recommended replacement for a Redis-synced Mountebank fleet;
+  it stops working only when a single flow genuinely sprays across nodes.
 - **Multi-instance imposter-CRUD sync** (one process's `POST /imposters` becoming visible on another
   — the pub/sub half of a custom Redis repository) is a **non-goal**: Rift provides no cross-instance
   imposter replication today. A deployment that needs it keeps that coordination layer *above* the
-  admin API (it is plain REST and works unchanged) until engine-side distributed support lands.
+  admin API (it is plain REST and works unchanged). Engine-side config-sync is a possible future
+  direction, not a commitment — don't plan a migration around it.
 
 ## Things Rift rejects that Mountebank allowed
 
@@ -218,6 +226,18 @@ server. Migrate a repository-backed deployment as follows:
   imposters have no Rift equivalent.
 - **Custom `impostersRepository` / `redis` on `create()`.** No in-process repository module; see
   [Persistence & distributed state](#persistence--distributed-state) for the migration path.
+- **Numeric and boolean header values — engines ≤ v0.14.0 only.** Mountebank accepts
+  `"Content-Length": 124` (a JSON number); engines up to v0.14.0 reject the **entire imposter POST**
+  with a 400 ([rift#754](https://github.com/achird-labs/rift/issues/754)). Fixed in engine
+  **v0.15.0** ([rift#757](https://github.com/achird-labs/rift/pull/757)) — so unlike the two entries
+  above, this one is version-scoped rather than a standing restriction, and this SDK's default pin
+  (`DEFAULT_ENGINE_VERSION`) already points at v0.15.0. You still hit it whenever binary resolution
+  lands on an older engine: one installed on PATH, an explicit `binaryPath` / `RIFT_BINARY_PATH`, or
+  a pinned `version:` — none of which are version-checked (the PATH probe confirms a candidate *is*
+  Rift, not which version it is). Note the SDK does not stringify these values for you: the same 400
+  occurs through `create()` and the typed DSL, and equally when you POST raw imposter JSON straight
+  to an older engine's **admin port**. On an affected engine, stringify non-string header values
+  (`"124"`) before POSTing; otherwise upgrade the engine.
 
 ## See also
 
