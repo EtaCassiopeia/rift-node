@@ -1,3 +1,10 @@
+---
+layout: default
+title: Monorepo migration
+nav_order: 90
+permalink: /monorepo-migration/
+---
+
 # Moving from `rift/packages/rift-node`
 
 The `@rift-vs/rift` npm package now ships from **this repository** (`rift-node`), not from
@@ -18,5 +25,5 @@ The `@rift-vs/rift` npm package now ships from **this repository** (`rift-node`)
 
 Links from the `rift` monorepo's own docs/README pointing at `packages/rift-node` are tracked as a
 follow-up in the `rift` repo (not this one) — see that repo's issue tracker for the redirect work.
-This repo's docs (this file, [`README.md`](../README.md), [`docs/migration.md`](migration.md)) are
+This repo's docs (this file, [`README.md`](index.md), [`docs/migration.md`](mountebank/migration.md)) are
 the current source of truth in the meantime.

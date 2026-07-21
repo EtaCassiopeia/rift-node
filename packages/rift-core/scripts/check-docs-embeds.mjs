@@ -66,6 +66,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+/** Repo root — the published docs site lives at `<repo>/docs`, outside this package. */
+const REPO_ROOT = dirname(dirname(ROOT));
 
 const START_RE = /^\s*\/\/\s*docs:embed\s+(\S+)\s*$/;
 const END_RE = /^\s*\/\/\s*docs:embed-end\s+(\S+)\s*$/;
@@ -143,16 +145,21 @@ function extractExampleRegions() {
 
 // ── extract markdown fenced blocks ─────────────────────────────────────────────────────────────
 
+// Recursive, so a page added anywhere under the site is covered without editing this list —
+// the anti-rot guarantee should not depend on someone remembering to register a directory.
 function listMarkdownFiles() {
-  const files = [join(ROOT, 'README.md')];
-  const docsDir = join(ROOT, 'docs');
-  for (const f of readdirSync(docsDir)) {
-    if (f.endsWith('.md')) files.push(join(docsDir, f));
-  }
-  const designDir = join(docsDir, 'design');
-  for (const f of readdirSync(designDir)) {
-    if (f.endsWith('.md')) files.push(join(designDir, f));
-  }
+  const files = [join(ROOT, 'README.md'), join(REPO_ROOT, 'README.md')];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      // `_site` is Jekyll's build output; `_layouts`/`_includes` are theme plumbing, not pages.
+      if (entry.isDirectory()) {
+        if (!entry.name.startsWith('_')) walk(join(dir, entry.name));
+      } else if (entry.name.endsWith('.md')) {
+        files.push(join(dir, entry.name));
+      }
+    }
+  };
+  walk(join(REPO_ROOT, 'docs'));
   return files;
 }
 
