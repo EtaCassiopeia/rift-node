@@ -1,0 +1,56 @@
+# rift-node documentation — Jekyll config for GitHub Pages.
+# Mirrors the engine repo's setup (achird-labs/rift) so the two sites feel like one product.
+title: rift-node
+description: Official Node.js / TypeScript SDK for Rift — a high-performance, Mountebank-compatible HTTP/HTTPS mock server
+baseurl: "/rift-node"
+url: "https://achird-labs.github.io"
+
+# Theme
+remote_theme: just-the-docs/just-the-docs
+color_scheme: dark
+
+# Aux links (top right)
+aux_links:
+  "GitHub":
+    - "https://github.com/achird-labs/rift-node"
+  "npm":
+    - "https://www.npmjs.com/package/@rift-vs/rift"
+  "Rift engine":
+    - "https://achird-labs.github.io/rift/"
+
+aux_links_new_tab: true
+
+# Navigation
+nav_enabled: true
+nav_sort: case_insensitive
+
+# Search
+search_enabled: true
+search:
+  heading_level: 2
+  previews: 3
+  preview_words_before: 5
+  preview_words_after: 10
+  tokenizer_separator: /[\s/]+/
+  rel_url: true
+  button: false
+
+# Footer
+footer_content: "Copyright &copy; 2026 Rift Contributors. Distributed under the <a href=\"https://github.com/achird-labs/rift-node/blob/master/LICENSE\">MIT License</a>. Docs current as of <a href=\"https://github.com/achird-labs/rift-node/releases/tag/v0.15.0\">v0.15.0</a>."
+
+back_to_top: true
+back_to_top_text: "Back to top"
+
+# Link to the page source so a reader can fix a doc in one click.
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub"
+gh_edit_repository: "https://github.com/achird-labs/rift-node"
+gh_edit_branch: "master"
+gh_edit_source: docs
+gh_edit_view_mode: "tree"
+
+# `examples/` snippets are embedded into these pages by scripts/check-docs-embeds.mjs;
+# nothing here should be treated as a Jekyll collection.
+exclude:
+  - node_modules
+  - vendor

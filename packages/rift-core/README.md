@@ -3,7 +3,7 @@
 Official Node.js / TypeScript SDK for [Rift](https://github.com/achird-labs/rift) — a
 high-performance, Mountebank-compatible HTTP/HTTPS mock server written in Rust. The SDK now ships
 from this repo (`@rift-vs/rift`, same package name, version line ≥ 0.12.0) — see
-[`docs/monorepo-migration.md`](docs/monorepo-migration.md) if you're coming from
+[`docs/monorepo-migration.md`](https://achird-labs.github.io/rift-node/monorepo-migration/) if you're coming from
 `rift/packages/rift-node`.
 
 A typed, fluent DSL builds imposters/stubs/predicates/responses; three transports
@@ -14,7 +14,7 @@ fault injection, stateful scenarios, spaces/flow-state, request verification, an
 intercept.
 
 Already on Mountebank or the pre-monorepo `@rift-vs/rift`? See
-[`docs/migration.md`](docs/migration.md) — `create()` compat is permanent, so adoption of the
+[`docs/migration.md`](https://achird-labs.github.io/rift-node/mountebank/migration/) — `create()` compat is permanent, so adoption of the
 typed DSL is incremental, not a forced rewrite.
 
 ## Quick start
@@ -129,10 +129,10 @@ await fetch(`${users.url}/api/users/1`);
 ### Mountebank-compat `create()` — unchanged drop-in
 
 Existing `@rift-vs/rift`/Mountebank code (raw `POST /imposters`, the `mb` CLI, ...) keeps working
-verbatim. Permanent, not deprecated — see [`docs/migration.md`](docs/migration.md). See
+verbatim. Permanent, not deprecated — see [`docs/migration.md`](https://achird-labs.github.io/rift-node/mountebank/migration/). See
 [`examples/quickstart-compat.ts`](examples/quickstart-compat.ts). `create({ datadir })` gives
 Mountebank `--datadir` persistence parity — imposters survive a restart; see
-[migration §persistence](docs/migration.md#persistence--distributed-state).
+[migration §persistence](https://achird-labs.github.io/rift-node/mountebank/migration/#persistence--distributed-state).
 
 <!-- docs:embed quickstart-compat -->
 ```ts
@@ -149,15 +149,15 @@ await server.close();
 
 | Feature | What it does | Reference |
 |---|---|---|
-| Stubs & predicates | `onGet`/`onPost`/.../`stub()` + `req.*`/`equals`/`contains`/`matches`/... matchers, `and`/`or`/`not` | [migration §predicates](docs/migration.md#predicates) |
-| Response cycling | `willReturn(a, b, c)` cycles responses across successive matching calls | [migration §responses](docs/migration.md#responses) |
-| Behaviors | `.latency()`, `.repeat()`, `.decorate()`, `.copy()`, `.lookup()`, `.shellTransform()` | [migration §behaviors](docs/migration.md#behaviors) |
-| Faults | `Fault.latency/error/tcp` (probabilistic, `.withFault()`) + native `fault()` responses | [migration §faults](docs/migration.md#faults) |
-| Scenarios | `scenario().startingAt().when().respond().goTo()` stateful FSM stubs | [migration §scenarios](docs/migration.md#scenarios) |
+| Stubs & predicates | `onGet`/`onPost`/.../`stub()` + `req.*`/`equals`/`contains`/`matches`/... matchers, `and`/`or`/`not` | [migration §predicates](https://achird-labs.github.io/rift-node/mountebank/migration/#predicates) |
+| Response cycling | `willReturn(a, b, c)` cycles responses across successive matching calls | [migration §responses](https://achird-labs.github.io/rift-node/mountebank/migration/#responses) |
+| Behaviors | `.latency()`, `.repeat()`, `.decorate()`, `.copy()`, `.lookup()`, `.shellTransform()` | [migration §behaviors](https://achird-labs.github.io/rift-node/mountebank/migration/#behaviors) |
+| Faults | `Fault.latency/error/tcp` (probabilistic, `.withFault()`) + native `fault()` responses | [migration §faults](https://achird-labs.github.io/rift-node/mountebank/migration/#faults) |
+| Scenarios | `scenario().startingAt().when().respond().goTo()` stateful FSM stubs | [migration §scenarios](https://achird-labs.github.io/rift-node/mountebank/migration/#scenarios) |
 | Spaces / flow state | Per-flow-id stub/verification scoping over one shared imposter | [Isolation](#isolation) below |
-| Proxy record/replay | `proxyTo(url).proxyOnce()/.proxyAlways()`, `generatePredicates()`, `pathRewrite()` | [migration §proxy](docs/migration.md#proxy) |
-| Intercept (TLS-MITM) | `engine.intercept()` — `serve`/`forward`/`redirectTo`, CA + trust helpers | [`docs/design/sdk-api.md` §7](docs/design/sdk-api.md#7-intercept-tls-mitm) |
-| Verification | `imposter.verify(match, times(n))` — WireMock-style near-miss diffs | [migration §verification](docs/migration.md#verification) |
+| Proxy record/replay | `proxyTo(url).proxyOnce()/.proxyAlways()`, `generatePredicates()`, `pathRewrite()` | [migration §proxy](https://achird-labs.github.io/rift-node/mountebank/migration/#proxy) |
+| Intercept (TLS-MITM) | `engine.intercept()` — `serve`/`forward`/`redirectTo`, CA + trust helpers | [`docs/design/sdk-api.md` §7](https://achird-labs.github.io/rift-node/reference/sdk-api/#7-intercept-tls-mitm) |
+| Verification | `imposter.verify(match, times(n))` — WireMock-style near-miss diffs | [migration §verification](https://achird-labs.github.io/rift-node/mountebank/migration/#verification) |
 | Testkit | `@rift-vs/rift/testkit/vitest` fixtures, `@rift-vs/rift/testkit/jest` helpers | [Testkit](#testkit) below |
 
 ## Native resolution: engine binary + cdylib
@@ -260,10 +260,10 @@ example, or an example that stops compiling, fails the build.
 
 ## Design
 
-- [`docs/design/sdk-api.md`](docs/design/sdk-api.md) — the canonical API design reference (full
+- [`docs/design/sdk-api.md`](https://achird-labs.github.io/rift-node/reference/sdk-api/) — the canonical API design reference (full
   grammar, transport internals, issue map)
-- [`docs/migration.md`](docs/migration.md) — Mountebank → typed-DSL, side by side
-- [`docs/monorepo-migration.md`](docs/monorepo-migration.md) — moving from `rift/packages/rift-node`
+- [`docs/migration.md`](https://achird-labs.github.io/rift-node/mountebank/migration/) — Mountebank → typed-DSL, side by side
+- [`docs/monorepo-migration.md`](https://achird-labs.github.io/rift-node/monorepo-migration/) — moving from `rift/packages/rift-node`
 - RFC-003 — Rift Language SDKs, §12 Node/TS amendment (design vault)
 - Sibling SDKs: [rift-java](https://github.com/achird-labs/rift-java) ·
   [rift-scala](https://github.com/achird-labs/rift-scala) ·

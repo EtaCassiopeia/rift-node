@@ -1,0 +1,47 @@
+# Publishes docs/ to GitHub Pages (https://achird-labs.github.io/rift-node/).
+#
+# Mirrors the engine repo's docs workflow: GitHub's own Jekyll builder, no local toolchain, and a
+# single in-flight deployment. `docs:check` (the anti-rot embed checker) runs in ci.yml against
+# every page under docs/, so a snippet that drifts from its examples/*.ts source fails CI before it
+# can be published here.
+name: Docs
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; don't cancel a deploy already in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./_site
+      - uses: actions/upload-pages-artifact@v3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

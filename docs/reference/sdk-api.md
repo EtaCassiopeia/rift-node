@@ -1,3 +1,11 @@
+---
+layout: default
+title: API reference
+parent: Reference
+nav_order: 1
+permalink: /reference/sdk-api/
+---
+
 # rift-node SDK — API Reference
 
 Status: **canonical reference** · matches the shipped surface of `@rift-vs/rift` 0.12.1

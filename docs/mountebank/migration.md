@@ -1,3 +1,11 @@
+---
+layout: default
+title: Migrating from Mountebank
+parent: Mountebank compatibility
+nav_order: 1
+permalink: /mountebank/migration/
+---
+
 # Migrating from Mountebank
 
 `@rift-vs/rift` ships two coexisting APIs in the same process, permanently:
@@ -14,7 +22,7 @@ be mixed with DSL-built imposters on the same engine. This document is a referen
 concepts when (and only as fast as) you want to.
 
 Every operator, behavior, fault, and response type below maps to a real, exported DSL symbol —
-this table is checked against [`docs/design/sdk-api.md`](design/sdk-api.md) §5 (the full grammar
+this table is checked against [`docs/design/sdk-api.md`](../reference/sdk-api.md) §5 (the full grammar
 reference) for completeness.
 
 ## Imposter creation
@@ -22,7 +30,7 @@ reference) for completeness.
 | Mountebank (raw JSON / REST) | Typed DSL |
 |---|---|
 | `POST /imposters` with `{ port, protocol: 'http', stubs: [...] }` | `engine.create(imposter().port(n).stub(...))` |
-| `mb.create({ port, ... })` (or `@rift-vs/rift`'s old `create()`) | `create({ port, ... })` — unchanged, see the [per-transport quick starts](../README.md#per-transport-quick-starts) |
+| `mb.create({ port, ... })` (or `@rift-vs/rift`'s old `create()`) | `create({ port, ... })` — unchanged, see the [per-transport quick starts](../getting-started/transports.md) |
 | `{ protocol: 'https', cert, key, mutualAuth: true }` | `imposter().https({ cert, key, mutualAuth: true })` |
 | `{ recordRequests: true }` | `imposter().record()` |
 | `{ recordMatches: true }` | `imposter().recordMatches()` |
@@ -241,7 +249,7 @@ server. Migrate a repository-backed deployment as follows:
 
 ## See also
 
-- [`docs/design/sdk-api.md`](design/sdk-api.md) — the full API design reference (types, transport
+- [`docs/design/sdk-api.md`](../reference/sdk-api.md) — the full API design reference (types, transport
   internals, the issue map this SDK was built from)
-- [README.md](../README.md) — quick starts, feature tour, env var reference
-- [`docs/monorepo-migration.md`](monorepo-migration.md) — moving from `rift/packages/rift-node`
+- [README.md](../index.md) — quick starts, feature tour, env var reference
+- [`docs/monorepo-migration.md`](../monorepo-migration.md) — moving from `rift/packages/rift-node`
